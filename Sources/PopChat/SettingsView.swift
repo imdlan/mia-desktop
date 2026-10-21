@@ -1124,12 +1124,14 @@ struct SettingsView: View {
     // MARK: - About
 
     /// Centered identity block (Apple-About style) on the same page background
-    /// as the other tabs; credits and copyright ride the shared footer style.
+    /// as the other tabs. Credits sit under the description in small centered
+    /// type — deliberately NOT the ⓘ footer style used by the other tabs, which
+    /// reads as "settings fine print" rather than an about page.
     /// The bundle icon comes from AppIcon.icns; the bare-binary harness falls
     /// back to the generic app icon.
     private var aboutTab: some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 64)
+            Spacer(minLength: 48)
             VStack(spacing: 10) {
                 Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
                     .resizable()
@@ -1143,13 +1145,15 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 30)
             }
-            Spacer(minLength: 24)
-            VStack(alignment: .leading, spacing: 6) {
-                sectionFooter("Thanks to the original author, Le Chen.")
-                sectionFooter("Copyright © 2026 Le Chen · Version \(UpdateChecker.currentVersion)")
+            VStack(spacing: 4) {
+                Text("Thanks to the original author, Le Chen.")
+                Text("Copyright © 2026 David · Version \(UpdateChecker.currentVersion)")
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            .font(.system(size: 10.5))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.top, 30)
+            Spacer(minLength: 48)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(formPageBackground)
