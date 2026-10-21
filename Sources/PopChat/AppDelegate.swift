@@ -244,12 +244,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "PopChat Settings"
-            // The tab strip IS the titlebar: one continuous panel from the
-            // traffic lights down through the form. `title` stays set for
-            // Exposé and accessibility.
+            window.title = "PopChat"
+            // The tab strip sits on the (transparent) titlebar so window, strip
+            // and form read as one panel; the title itself stays visible above
+            // the tabs. `title` also feeds Exposé and accessibility.
             window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
+            window.titleVisibility = .visible
             window.contentView = NSHostingView(rootView: SettingsView(store: providerStore, shortcutStore: shortcutStore, updates: updateChecker))
             window.isReleasedWhenClosed = false
             // The chat panel floats (.floating level); a normal-level Settings

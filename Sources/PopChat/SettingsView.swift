@@ -414,11 +414,8 @@ struct SettingsView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: editingID)
-                Text("The live provider and model are picked from the pill in the chat panel — this list only manages what shows up there. Keys are stored locally, never synced.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 2)
+                sectionFooter("The live provider and model are picked from the pill in the chat panel — this list only manages what shows up there. Keys are stored locally, never synced.")
+                    .padding(.leading, 10)
                     .help("~/Library/Application Support/PopChat/secrets.json, user-only permissions.")
             }
             .padding(.horizontal, 20)
@@ -1133,12 +1130,19 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
     }
 
-    /// Section footnote shared by every tab.
+    /// Section footnote shared by every tab: left-aligned, with a small info
+    /// glyph by the text. The symbol's own side bearings already put ~2pt of
+    /// air around the drawn circle, so spacing 0 lands the visual gap at 2pt.
     private func sectionFooter(_ text: String) -> some View {
-        Text(text)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 9))
+            Text(text)
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Default model for the EDITED provider — never the selected one. Settings
