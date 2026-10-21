@@ -18,6 +18,7 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 - **Slash commands** — your own prompt templates with a `{input}` placeholder and an autocomplete popup when the draft starts with `/`.
 - **Retry the last answer** — with a different model if you like: switch the pill, press Retry. *Edit prompt* puts your last message back in the composer instead, and **↑** in an empty composer walks back through prompts you've sent.
 - **See the thinking** — while a reasoning model works, its thoughts scroll in a small window you can expand; once the answer lands they fold into a collapsed *Reasoning* section above it.
+- **Question timeline** — a quiet row of bars on the transcript's right edge, one per question. Hover to magnify them Dock-style and preview the question; click to jump straight to it. The column rests at low opacity and dims further after you leave.
 - **Search your chats** — ⌘Y searches what was actually said, not just chat titles, and shows the matching line.
 - **Large editor** (⌘E) — the input capsule morphs into a full draft editor; ⌘↩ sends.
 - **Liquid-glass look** on macOS 26 (translucent panel with an adjustable tint), a solid fallback below that, Light/Dark/Auto appearance, four accent presets plus a custom color picker, and full support for Reduce Motion / Reduce Transparency.
