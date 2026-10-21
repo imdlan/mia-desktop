@@ -55,18 +55,25 @@ struct TranscriptTimeline: View {
                 markerRow(questions[index], index: index)
             }
         }
-        .contentShape(Rectangle())
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let location):
-                activate(at: location.y)
-            case .ended:
-                deactivate()
-            @unknown default:
-                break
-            }
-        }
         .opacity(dimmed ? 0.4 : 1)
+        .overlay {
+            // AppKit-native hover tracking. SwiftUI's onHover/onContinuousHover
+            // proved unreliable here (dropped re-entry after an exit, twice,
+            // across two implementations) — NSTrackingArea with .activeAlways
+            // is the canonical mechanism and does not miss events.
+            HoverTrackingStrip(
+                onMove: { y in
+                    if let y {
+                        activate(at: y)
+                    } else {
+                        deactivate()
+                    }
+                },
+                onClick: { y in
+                    onJump(nearestQuestion(at: y))
+                }
+            )
+        }
         .overlay(alignment: .trailing) {
             if let index = hoveredIndex {
                 thumbnail(questions[index])
@@ -151,16 +158,6 @@ struct TranscriptTimeline: View {
         // The fixed row frame is what keeps the column's height stable while
         // bar heights change inside it — no jitter for the neighbors.
         .frame(width: 24, height: 14, alignment: .trailing)
-        .contentShape(Rectangle())
-        // Belt and braces: if `onContinuousHover` misses the first re-entry
-        // after an `.ended`, the row-level hover still recovers activation.
-        .onHover { entering in
-            guard entering, pointerY == nil else { return }
-            activate(at: 7 + CGFloat(index) * rowPitch)
-        }
-        .onTapGesture {
-            onJump(question.id)
-        }
     }
 
     /// Idle bar color — quiet by default; hovering does the highlighting (the
@@ -237,5 +234,76 @@ private struct TooltipWidthKey: PreferenceKey {
     nonisolated static var defaultValue: [UUID: CGFloat] { [:] }
     nonisolated static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+// MARK: - AppKit hover tracking
+
+/// An NSView filling the timeline strip that forwards pointer position through
+/// NSTrackingArea — the canonical macOS hover mechanism. SwiftUI's
+/// `onHover`/`onContinuousHover` dropped re-entry events in this context
+/// (NSPanel + NSHostingView + overlays + opacity changes), which left the
+/// timeline stuck dimmed; tracking areas do not.
+private struct HoverTrackingStrip: NSViewRepresentable {
+    /// Pointer Y in the strip's coordinate space (bottom-up), nil on exit.
+    let onMove: (CGFloat?) -> Void
+    /// Click Y — the whole strip is tappable, gaps included.
+    let onClick: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> TrackingNSView {
+        let view = TrackingNSView()
+        view.onMove = onMove
+        view.onClick = onClick
+        view.setAccessibilityLabel("Question timeline")
+        return view
+    }
+
+    func updateNSView(_ view: TrackingNSView, context: Context) {
+        view.onMove = onMove
+        view.onClick = onClick
+    }
+}
+
+private final class TrackingNSView: NSView {
+    var onMove: ((CGFloat?) -> Void)?
+    var onClick: ((CGFloat) -> Void)?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        // .inVisibleRect keeps the area synced to bounds changes; .activeAlways
+        // tracks even while the floating panel is not key.
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { forward(event) }
+    override func mouseMoved(with event: NSEvent) { forward(event) }
+    override func mouseDragged(with event: NSEvent) { forward(event) }
+
+    override func mouseExited(with event: NSEvent) {
+        onMove?(nil)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?(topDownY(of: event))
+    }
+
+    /// SwiftUI math above treats the strip top-down (bar centers at
+    /// `7 + i * rowPitch` from the TOP); NSView reports bottom-up, so flip Y
+    /// here once at the boundary.
+    private func topDownY(of event: NSEvent) -> CGFloat {
+        bounds.height - convert(event.locationInWindow, from: nil).y
+    }
+
+    private func forward(_ event: NSEvent) {
+        onMove?(topDownY(of: event))
     }
 }
