@@ -1,8 +1,8 @@
 # PopChat
 
-[![License: MIT](https://img.shields.io/github/license/lec77/PopChat)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/imdlan/PopChat)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
-![Latest release](https://img.shields.io/github/v/release/lec77/PopChat)
+![Latest release](https://img.shields.io/github/v/release/imdlan/PopChat)
 
 A mini AI chat app for quick, small (and usually temporary) chats — the kind that don't need a frontier model, so it pairs nicely with lighter, locally-run ones.
 
@@ -24,7 +24,7 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 
 ## Install
 
-Download the latest `PopChat-x.y.z.dmg` from [Releases](https://github.com/lec77/PopChat/releases), open it, and drag PopChat to Applications. Releases are Developer-ID signed and notarized, so macOS opens them without any Gatekeeper warning.
+Download the latest `PopChat-x.y.z.dmg` from [Releases](https://github.com/imdlan/PopChat/releases), open it, and drag PopChat to Applications. Releases are Developer-ID signed and notarized, so macOS opens them without any Gatekeeper warning.
 
 Requires **macOS 14 or later**. The liquid-glass backdrop needs macOS 26; older systems get a solid panel.
 
@@ -33,7 +33,7 @@ Requires **macOS 14 or later**. The liquid-glass backdrop needs macOS 26; older 
 Needs a Swift toolchain — Xcode, or just the Command Line Tools (`xcode-select --install`).
 
 ```sh
-git clone https://github.com/lec77/PopChat.git
+git clone https://github.com/imdlan/PopChat.git
 cd PopChat
 ./build.sh              # release build → dist/PopChat.app
 open dist/PopChat.app
