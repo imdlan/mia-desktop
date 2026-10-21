@@ -21,6 +21,15 @@ final class UpdateChecker: ObservableObject {
     private static let checkInterval: TimeInterval = 24 * 60 * 60
 
     private static let lastCheckKey = "lastUpdateCheck"
+    /// Conditional-request cache. GitHub's unauthenticated quota is 60 req/h
+    /// per IP — shared with every other tool on the machine — so every check
+    /// spending one is what got users "rate-limited" on a personal app. An
+    /// `If-None-Match` revalidation that returns 304 does NOT count against
+    /// the quota, so the payload (and its ETag) from the last 200 is kept
+    /// here and replayed when GitHub says "unchanged".
+    private static let etagKey = "updateCheckETag"
+    private static let cachedVersionKey = "updateCheckCachedVersion"
+    private static let cachedPageKey = "updateCheckCachedPage"
     /// Opt-out lives in Settings › General, which owns it as `@AppStorage` like
     /// every other preference there. Read (never written) here, because the
     /// scheduled check runs outside any view. Default on: the whole point is
@@ -107,6 +116,9 @@ final class UpdateChecker: ObservableObject {
         request.timeoutInterval = 20
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("PopChat/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        if let etag = await cachedETag() {
+            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else {
@@ -114,9 +126,16 @@ final class UpdateChecker: ObservableObject {
             }
             switch http.statusCode {
             case 200:
-                return .success(decodeRelease(data))
+                let release = decodeRelease(data)
+                await storeCache(etag: http.value(forHTTPHeaderField: "ETag"), release: release)
+                return .success(release)
+            case 304:
+                // Quota-free "unchanged since last time". The cache was written
+                // together with the ETag, so a missing cache here means the
+                // payload was empty (no releases) — same answer.
+                return .success(await cachedRelease())
             case 403, 429:
-                return .failure("GitHub is rate-limiting update checks — try again later.")
+                return .failure(rateLimitMessage(http))
             case 404:
                 return .success(nil) // no releases published yet
             default:
@@ -125,6 +144,47 @@ final class UpdateChecker: ObservableObject {
         } catch {
             return .failure(error.localizedDescription)
         }
+    }
+
+    // UserDefaults is MainActor-isolated in this SDK, so every touch of the
+    // conditional-request cache funnels through these helpers instead of
+    // leaking actor hops into fetchLatest.
+
+    @MainActor private static func cachedETag() -> String? {
+        UserDefaults.standard.string(forKey: etagKey)
+    }
+
+    @MainActor private static func storeCache(etag: String?, release: Release?) {
+        let defaults = UserDefaults.standard
+        if let etag {
+            defaults.set(etag, forKey: etagKey)
+        }
+        if let release {
+            defaults.set(release.version, forKey: cachedVersionKey)
+            defaults.set(release.page.absoluteString, forKey: cachedPageKey)
+        } else {
+            defaults.removeObject(forKey: cachedVersionKey)
+            defaults.removeObject(forKey: cachedPageKey)
+        }
+    }
+
+    @MainActor private static func cachedRelease() -> Release? {
+        let defaults = UserDefaults.standard
+        guard let version = defaults.string(forKey: cachedVersionKey),
+              let page = defaults.string(forKey: cachedPageKey).flatMap(URL.init(string:))
+        else { return nil }
+        return Release(version: version, page: page)
+    }
+
+    /// 403/429 with a reset timestamp says exactly when the quota returns;
+    /// telling the user "in 12 min" beats "try again later".
+    nonisolated private static func rateLimitMessage(_ http: HTTPURLResponse) -> String {
+        if let reset = http.value(forHTTPHeaderField: "x-ratelimit-reset").flatMap(Double.init)
+            .map({ Date(timeIntervalSince1970: $0) }), reset > Date() {
+            let minutes = max(1, Int(ceil(reset.timeIntervalSinceNow / 60)))
+            return "GitHub is rate-limiting update checks — try again in \(minutes) min."
+        }
+        return "GitHub is rate-limiting update checks — try again later."
     }
 
     /// The `/releases/latest` payload. That endpoint already excludes drafts and
