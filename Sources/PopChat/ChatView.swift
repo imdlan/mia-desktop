@@ -427,9 +427,8 @@ struct ChatView: View {
                             proxy.scrollTo(id, anchor: .center)
                         }
                     }
-                    // 8pt off the edge: leaves the transient system scrollbar
-                    // its own strip instead of sitting on the rail.
-                    .padding(.trailing, 8)
+                    // Matches the composer's 12pt trailing margin.
+                    .padding(.trailing, 12)
                 }
             }
             .animation(.easeOut(duration: 0.15), value: showNewMessagesPill)
