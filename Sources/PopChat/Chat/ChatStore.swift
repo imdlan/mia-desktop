@@ -78,6 +78,16 @@ final class ChatStore: ObservableObject {
     private var forkMessageID: UUID?
     private var sharedPrefixCount = 0
 
+    // P3 auto-naming state. `customTitle` is the model-written (or any future
+    // manually renamed) title; nil means the persisted title is still the
+    // derived default, which is exactly the "still default" test the trigger
+    // needs — persist() re-derives whenever this is nil, so the two can never
+    // disagree. `titleAttempted` is the once-guard: set when the request is
+    // DISPATCHED (not when it returns), so a failing provider never gets a
+    // second, third, … try at the user's expense.
+    private var customTitle: String?
+    private var titleAttempted = false
+
     private let providerStore: ProviderStore
     private let shortcutStore: ShortcutStore
     private var streamTask: Task<Void, Never>?
@@ -186,6 +196,11 @@ final class ChatStore: ObservableObject {
             forkMessageID = loaded.conversation.forkMessageID
             sharedPrefixCount = loaded.messages.count - loaded.conversation.messages.count
         }
+        // `autoTitled` on disk is what distinguishes a model-written title
+        // from the derived default across restarts; without it the reload
+        // would re-derive and a named chat would silently lose its name.
+        customTitle = loaded.conversation.autoTitled == true ? loaded.conversation.title : nil
+        titleAttempted = loaded.conversation.autoTitled == true
     }
 
     static var webSearchEnabled: Bool {
@@ -215,8 +230,17 @@ final class ChatStore: ObservableObject {
     fences for illustrative code.
     """
 
+    /// The system prompt for the next send: the ACTIVE persona's prompt when
+    /// one is selected (P4), otherwise the user's free-text prompt exactly as
+    /// before ("Custom"). Resolution is PersonaStore's pure law so the
+    /// `--smoke-persona` harness can pin the priority; a persona id whose
+    /// entry was deleted resolves as Custom.
     static var systemPrompt: String {
-        UserDefaults.standard.string(forKey: "systemPrompt") ?? defaultSystemPrompt
+        PersonaStore.resolvePrompt(
+            activeID: UserDefaults.standard.string(forKey: "activePersonaID"),
+            personas: PersonaStore.stored(),
+            fallback: UserDefaults.standard.string(forKey: "systemPrompt") ?? defaultSystemPrompt
+        )
     }
 
     @discardableResult
@@ -452,6 +476,9 @@ final class ChatStore: ObservableObject {
             }
             if stillOurs { streamingMessageID = nil }
             persist()
+            // The turn produced a real answer: this is the one moment a
+            // default-titled conversation becomes worth naming (P3).
+            maybeAutoTitle(producedAnswer: !finalText.isEmpty)
         }
         // The turn actually started — the composer clears its draft/attachments.
         return true
@@ -873,6 +900,8 @@ final class ChatStore: ObservableObject {
             forkParentID = nil
             forkMessageID = nil
             sharedPrefixCount = 0
+            customTitle = nil
+            titleAttempted = false
         } else if forkParentID == id {
             // Our file was just materialized as standalone; align memory with it.
             forkParentID = nil
@@ -889,6 +918,8 @@ final class ChatStore: ObservableObject {
         forkParentID = nil
         forkMessageID = nil
         sharedPrefixCount = 0
+        customTitle = nil
+        titleAttempted = false
     }
 
     func loadConversation(_ id: UUID) {
@@ -909,14 +940,15 @@ final class ChatStore: ObservableObject {
     private func persist() {
         guard !messages.isEmpty else { return }
         searchCorpus = nil // the stored set changed; rebuild on the next search
-        let title = Self.title(for: messages)
+        let title = customTitle ?? Self.title(for: messages)
         let conversation = Conversation(
             id: conversationID,
             title: title,
             updatedAt: Date(),
             messages: Array(messages.dropFirst(sharedPrefixCount)),
             parentID: forkParentID,
-            forkMessageID: forkMessageID
+            forkMessageID: forkMessageID,
+            autoTitled: customTitle != nil
         )
         ConversationStore.save(conversation)
         recent.removeAll { $0.id == conversationID }
@@ -929,9 +961,64 @@ final class ChatStore: ObservableObject {
         ), at: 0)
     }
 
-    private static func title(for messages: [ChatMessage]) -> String {
+    /// First user message → display title: flattened to one line, cut at 40
+    /// characters with an ellipsis. Internal + nonisolated (it is pure string
+    /// work) so the titling harness can assert the exact default a
+    /// conversation must still carry before auto-naming may fire — same
+    /// test-hook pattern as `ConversationStore.overrideDirectory`.
+    nonisolated static func title(for messages: [ChatMessage]) -> String {
         let firstUserText = messages.first { $0.role == .user }?.text ?? "New chat"
         let flattened = firstUserText.replacingOccurrences(of: "\n", with: " ")
-        return flattened.count > 40 ? String(flattened.prefix(40)) + "…" : flattened
+        return flattened.count > Titling.maxTitleLength ? String(flattened.prefix(Titling.maxTitleLength)) + "…" : flattened
+    }
+
+    // MARK: - Auto-naming (P3)
+
+    /// Settings › Chat switch, default ON. `object(forKey:)`, not
+    /// `bool(forKey:)`: an unset key must read as ON, and bool() reports
+    /// missing keys as false — the inverse default.
+    static var autoTitleEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "autoTitleEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoTitleEnabled") }
+    }
+
+    /// After a completed turn, maybe ask the current provider once for a
+    /// short title. Fire-and-forget by design (R3.2): failures are swallowed
+    /// — no error row, no retry — because a nicer history label is never
+    /// worth interrupting the chat it describes.
+    private func maybeAutoTitle(producedAnswer: Bool) {
+        guard let config = providerStore.currentConfig(),
+              Titling.shouldTitle(
+                  enabled: Self.autoTitleEnabled,
+                  hasCustomTitle: customTitle != nil,
+                  alreadyAttempted: titleAttempted,
+                  producedAnswer: producedAnswer,
+                  kind: config.kind
+              ) else { return }
+        guard let firstUser = messages.first(where: { $0.role == .user })?.text,
+              !firstUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let request = Titling.requestMessages(firstUserText: firstUser)
+        // Set at dispatch: the once-guard must hold even if the request never
+        // comes back, or a flaky provider gets re-charged every turn.
+        titleAttempted = true
+        let namedConversation = conversationID
+        Task { [weak self] in
+            let raw: String
+            do {
+                raw = try await Titling.fetchTitle(messages: request, config: config)
+            } catch {
+                return // silent by design
+            }
+            let title = Titling.sanitize(raw)
+            guard !title.isEmpty else { return }
+            guard let self, self.conversationID == namedConversation, self.customTitle == nil else { return }
+            self.customTitle = title
+            // Mid-turn would persist the empty streaming placeholder row; the
+            // turn's own end-of-turn persist() carries the title instead.
+            if !self.isStreaming {
+                self.persist()
+            }
+        }
     }
 }

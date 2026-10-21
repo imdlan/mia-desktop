@@ -30,6 +30,29 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- P2 "ask about selection": registers the Services menu item "Ask PopChat
+	     About Selection" (delivered to AppDelegate.askWithSelection). macOS only
+	     lists the service for apps it has seen running — run the app once (or
+	     `pbs -update`) after first build. NSRequiredContext empty on purpose:
+	     no modifier/context restrictions, the item is always offered. -->
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMessage</key>
+			<string>askWithSelection</string>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Ask PopChat About Selection</string>
+			</dict>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>NSString</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Providers are URLs the USER types (self-hosted vLLM/llama.cpp boxes, LAN
 	     servers, proxies), so cleartext HTTP has to be allowed for hosts unknown at
 	     build time. NSAllowsLocalNetworking alone covers only .local, unqualified

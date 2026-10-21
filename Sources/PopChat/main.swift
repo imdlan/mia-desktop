@@ -755,6 +755,329 @@ if CommandLine.arguments.contains("--smoke-chat-search") {
     log.finish()
 }
 
+// Conversation export round-trip (no network, no UI): the fork chain feeds the
+// Markdown/JSON encoders, and the Markdown is byte-exact against a golden
+// transcript — an export is an archive, so its shape must not drift silently.
+if CommandLine.arguments.contains("--smoke-export") {
+    let scratch = FileManager.default.temporaryDirectory
+        .appendingPathComponent("popchat-export-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+    ConversationStore.overrideDirectory = scratch
+    var log = CheckLog()
+
+    // The stamp line has to be golden, not machine-relative: pin the zone the
+    // formatters pick up (before the encoder's cached one is first touched).
+    // NSTimeZone.default — the one mutable global — rather than the read-only
+    // TimeZone.current; a harness-local mutation, restored on the way out.
+    let savedTimeZone = NSTimeZone.default
+    NSTimeZone.default = TimeZone(identifier: "UTC")!
+    defer { NSTimeZone.default = savedTimeZone }
+
+    let stamp: (Date) -> String = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: $0)
+    }
+
+    // Fixture: the parent holds the whole shared prefix; the fork stores only
+    // its divergent tail — exactly what lands on disk after a real fork.
+    let question = ChatMessage(role: .user, text: "What is 2+2?")
+    let answer = ChatMessage(
+        role: .assistant,
+        text: "It is 4.\n\n```swift\nlet sum = 2 + 2\n```",
+        reasoning: "Counting fingers"
+    )
+    let parent = Conversation(
+        id: UUID(), title: "Fork parent", updatedAt: Date(),
+        messages: [question, answer]
+    )
+    let tail = ChatMessage(role: .user, text: "Thanks!")
+    let child = Conversation(
+        id: UUID(), title: "Fork export child", updatedAt: Date(),
+        messages: [tail],
+        parentID: parent.id, forkMessageID: answer.id
+    )
+    ConversationStore.save(parent)
+    ConversationStore.save(child)
+
+    // (a) resolution: shared prefix absorbed, fork pointers cleared, and the
+    // tail-only file on disk left as it was.
+    log.check("tail-only on disk", ConversationStore.load(id: child.id)?.messages == [tail])
+    let resolved = ConversationStore.resolved(child.id)
+    log.check("resolved = prefix + tail (3 messages)", resolved?.messages == [question, answer, tail],
+          "count=\(resolved?.messages.count ?? -1)")
+    log.check("resolved clears the fork pointers",
+          resolved?.parentID == nil && resolved?.forkMessageID == nil)
+    guard let resolved else { log.finish() }
+
+    // (b) Markdown, byte-exact against the golden transcript.
+    let exportedAt = Date(timeIntervalSince1970: 1_761_000_000)
+    log.check("the golden stamp is pinned", stamp(exportedAt) == "2025-10-20 22:40",
+          "stamp=\(stamp(exportedAt))")
+    let golden = """
+            # Fork export child
+            *Exported from PopChat · \(stamp(exportedAt))*
+
+            **You:**
+
+            What is 2+2?
+
+            **Assistant:**
+
+            > *Reasoning:*
+            > Counting fingers
+
+            It is 4.
+
+            ```swift
+            let sum = 2 + 2
+            ```
+
+            **You:**
+
+            Thanks!
+            """
+    let markdown = ConversationExport.markdown(conversation: resolved, exportedAt: exportedAt)
+    log.check("markdown matches the golden transcript", markdown == golden + "\n",
+          "got=\(markdown.debugDescription)")
+
+    // (c) JSON: the export decodes back into the same resolved conversation.
+    do {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(Conversation.self, from: ConversationExport.json(conversation: resolved))
+        log.check("json round-trips the resolved conversation",
+              decoded.id == child.id && decoded.title == child.title
+                  && decoded.messages == [question, answer, tail]
+                  && decoded.parentID == nil && decoded.forkMessageID == nil)
+    } catch {
+        log.check("json round-trips the resolved conversation", false, "threw: \(error)")
+    }
+
+    // Default file names are the slug law the panels rely on: readable, and
+    // unique even among same-titled chats because of the id suffix.
+    log.check("file name is slug + id prefix",
+          ConversationExport.filenameBase(for: resolved) == "fork-export-child-" + String(child.id.uuidString.prefix(6)))
+
+    // UI-only rows export as italic notes — checked apart from the fork
+    // fixture so its message count stays exactly prefix + tail.
+    let noisy = ConversationExport.markdown(
+        conversation: Conversation(
+            id: UUID(), title: "Noisy", updatedAt: Date(),
+            messages: [
+                ChatMessage(role: .error, text: "Provider unreachable"),
+                ChatMessage(role: .activity, text: "Searching the web…"),
+            ]
+        ),
+        exportedAt: exportedAt
+    )
+    log.check("error/activity rows export as italic notes",
+          noisy.contains("*Provider unreachable*") && noisy.contains("*Searching the web…*"))
+
+    // The Export All write loop, against the same scratch store: one .md per
+    // conversation plus the merged bundle.
+    let bundle = ConversationExport.exportAll(conversations: [resolved, parent], to: scratch)
+    log.check("export all writes one .md per conversation plus conversations.json",
+          bundle.written == 2 && bundle.failed == 0
+              && FileManager.default.fileExists(atPath: scratch.appendingPathComponent("conversations.json").path))
+
+    try? FileManager.default.removeItem(at: scratch)
+    log.finish()
+}
+
+// Selection-quote formatting for the Services prefill (no network, no UI):
+//   .build/debug/PopChat --smoke-selection
+// The Services plumbing around it can't run headless; the FORMAT it injects
+// can and must not drift — it is what the user's model reads as context.
+if CommandLine.arguments.contains("--smoke-selection") {
+    var log = CheckLog()
+
+    log.check("single line gets a '> ' prefix and one trailing blank line",
+          SelectionQuote.quote("hello") == "> hello\n\n")
+    log.check("multi-line selection quotes every line",
+          SelectionQuote.quote("first\nsecond") == "> first\n> second\n\n")
+    log.check("blank inner lines become a bare '>'",
+          SelectionQuote.quote("a\n\nb") == "> a\n>\n> b\n\n")
+    log.check("whitespace-only inner lines collapse to a bare '>'",
+          SelectionQuote.quote("a\n   \nb") == "> a\n>\n> b\n\n")
+    log.check("empty selection formats to empty (no prefill)",
+          SelectionQuote.quote("") == "")
+    log.check("whitespace-only selection formats to empty",
+          SelectionQuote.quote(" \n \n") == "" && SelectionQuote.quote("\n") == "")
+    log.check("outer newlines are trimmed, never quoted",
+          SelectionQuote.quote("\n\nhello\n") == "> hello\n\n")
+    log.check("indentation inside the selection survives verbatim",
+          SelectionQuote.quote("code:\n    let x = 2") == "> code:\n>     let x = 2\n\n")
+    log.check("CRLF selections still quote as one line each",
+          SelectionQuote.quote("a\r\nb") == "> a\r\n> b\n\n")
+
+    log.finish()
+}
+
+// Auto-naming (P3) request construction, cleanup and guard laws (no network,
+// no UI):   .build/debug/PopChat --smoke-titling
+// The network hop itself has no injectable fake (fetchTitle uses the shared
+// URLSession), so the contract is pinned here at every pure boundary it has.
+if CommandLine.arguments.contains("--smoke-titling") {
+    var log = CheckLog()
+
+    // (a) requestMessages: one system instruction + ONE user message carrying
+    // a bounded slice of the first prompt.
+    let request = Titling.requestMessages(firstUserText: "How do I center a div?")
+    var systemText = ""
+    var userText = ""
+    if case .text(let text)? = request.first?.content { systemText = text }
+    if case .text(let text)? = request.last?.content { userText = text }
+    log.check("request is system + single user message",
+          request.count == 2 && request.first?.role == "system" && request.last?.role == "user")
+    log.check("system prompt demands a short untitled-formatted name",
+          systemText == Titling.systemPrompt && systemText.contains("6 words") && systemText.contains("no quotes"))
+    log.check("user message carries the first prompt verbatim", userText.contains("How do I center a div?"))
+
+    let longQuestion = String(repeating: "x", count: Titling.maxInputLength + 120)
+    var longPayload = ""
+    if case .text(let text)? = Titling.requestMessages(firstUserText: longQuestion).last?.content { longPayload = text }
+    log.check("first prompt is capped at 500 characters",
+          longPayload.count == "Name this conversation:\n\n".count + Titling.maxInputLength,
+          "count=\(longPayload.count)")
+
+    // The wire contract: tiny, cold, non-streaming.
+    let body = try? Titling.requestBody(model: "test-model", messages: request)
+    log.check("naming call is non-streaming, ≤24 tokens, temperature 0",
+          (body?["stream"] as? Bool) == false
+              && (body?["max_tokens"] as? Int) == 24
+              && (body?["temperature"] as? Int) == 0
+              && (body?["model"] as? String) == "test-model")
+
+    // (b) sanitize: quotes out, newlines flattened, width capped, empty inert.
+    log.check("straight quotes are stripped", Titling.sanitize("\"Fix my regex\"") == "Fix my regex")
+    log.check("curly quotes are stripped", Titling.sanitize("“Swift concurrency basics”") == "Swift concurrency basics")
+    log.check("newlines flatten to one line", Titling.sanitize("Line one\nLine two") == "Line one Line two")
+    let longTitle = Titling.sanitize(String(repeating: "a", count: 100))
+    log.check("titles cap at 40 characters plus ellipsis",
+          longTitle == String(repeating: "a", count: Titling.maxTitleLength) + "…")
+    log.check("blank and quote-only results are inert",
+          Titling.sanitize("") == "" && Titling.sanitize("   ") == "" && Titling.sanitize("\"'“”") == "")
+
+    // (c) the derived default: what a conversation must still carry to be
+    // nameable. Internal (test hook), so the harness asserts the exact law.
+    log.check("derived title is the first user message",
+          ChatStore.title(for: [ChatMessage(role: .user, text: "short question")]) == "short question")
+    log.check("derived title flattens newlines",
+          ChatStore.title(for: [ChatMessage(role: .user, text: "line one\nline two")]) == "line one line two")
+    log.check("derived title caps at 40 with ellipsis",
+          ChatStore.title(for: [ChatMessage(role: .user, text: String(repeating: "b", count: 100))])
+              == String(repeating: "b", count: Titling.maxTitleLength) + "…")
+    log.check("conversation without a user message says New chat",
+          ChatStore.title(for: [ChatMessage(role: .assistant, text: "hi")]) == "New chat")
+
+    // (d) old files: conversations persisted before autoTitled existed decode
+    // untouched — the exact JSON shape ConversationStore.save wrote back then.
+    let legacyJSON = """
+        {"id": "\(UUID().uuidString)", "title": "Legacy chat", "updatedAt": "2026-10-01T10:00:00Z", "messages": [{"id": "\(UUID().uuidString)", "role": "user", "text": "before auto-naming existed", "attachments": []}]}
+        """
+    let legacyDecoder = JSONDecoder()
+    legacyDecoder.dateDecodingStrategy = .iso8601
+    do {
+        let legacy = try legacyDecoder.decode(Conversation.self, from: Data(legacyJSON.utf8))
+        log.check("pre-autoTitled files still decode, flag reads nil",
+              legacy.autoTitled == nil && legacy.title == "Legacy chat")
+        var named = legacy
+        named.autoTitled = true
+        let legacyEncoder = JSONEncoder()
+        legacyEncoder.dateEncodingStrategy = .iso8601
+        let roundTrip = try legacyDecoder.decode(Conversation.self, from: try legacyEncoder.encode(named))
+        log.check("autoTitled round-trips through the store codec", roundTrip.autoTitled == true)
+    } catch {
+        log.check("pre-autoTitled files still decode, flag reads nil", false, "threw: \(error)")
+        log.check("autoTitled round-trips through the store codec", false, "threw: \(error)")
+    }
+
+    // (e) the once-guard matrix: every condition alone must veto.
+    let base = (enabled: true, hasCustomTitle: false, alreadyAttempted: false, producedAnswer: true, kind: ProviderKind.openAICompatible)
+    log.check("all guards passing is the only firing combination",
+          Titling.shouldTitle(enabled: base.enabled, hasCustomTitle: base.hasCustomTitle,
+                              alreadyAttempted: base.alreadyAttempted, producedAnswer: base.producedAnswer, kind: base.kind))
+    log.check("never a second attempt",
+          !Titling.shouldTitle(enabled: base.enabled, hasCustomTitle: base.hasCustomTitle,
+                               alreadyAttempted: true, producedAnswer: base.producedAnswer, kind: base.kind))
+    log.check("not once the title left its default",
+          !Titling.shouldTitle(enabled: base.enabled, hasCustomTitle: true,
+                               alreadyAttempted: base.alreadyAttempted, producedAnswer: base.producedAnswer, kind: base.kind))
+    log.check("not when the setting is off",
+          !Titling.shouldTitle(enabled: false, hasCustomTitle: base.hasCustomTitle,
+                               alreadyAttempted: base.alreadyAttempted, producedAnswer: base.producedAnswer, kind: base.kind))
+    log.check("not unless the turn produced a real answer",
+          !Titling.shouldTitle(enabled: base.enabled, hasCustomTitle: base.hasCustomTitle,
+                               alreadyAttempted: base.alreadyAttempted, producedAnswer: false, kind: base.kind))
+    log.check("subscription provider kinds are skipped silently",
+          !Titling.shouldTitle(enabled: base.enabled, hasCustomTitle: base.hasCustomTitle,
+                               alreadyAttempted: base.alreadyAttempted, producedAnswer: base.producedAnswer, kind: .chatGPT)
+              && !Titling.shouldTitle(enabled: base.enabled, hasCustomTitle: base.hasCustomTitle,
+                                      alreadyAttempted: base.alreadyAttempted, producedAnswer: base.producedAnswer, kind: .codexAppServer))
+
+    log.finish()
+}
+
+// Persona presets (P4) — resolution priority, Custom-path fidelity, seeding
+// laws, codec round-trip (no network, no UI, reads no mutable state):
+//   .build/debug/PopChat --smoke-persona
+if CommandLine.arguments.contains("--smoke-persona") {
+    var log = CheckLog()
+
+    let translate = Persona(id: UUID(), name: "Translate", prompt: "You are a precise translator.")
+    let reviewer = Persona(id: UUID(), name: "Code Review", prompt: "You are a senior code reviewer.")
+    let roster = [translate, reviewer]
+
+    // (a) Resolution priority: the active persona's prompt wins; everything
+    // else is the caller's fallback.
+    log.check("active persona's prompt is sent",
+          PersonaStore.resolvePrompt(activeID: translate.id.uuidString, personas: roster, fallback: "FALLBACK")
+              == translate.prompt)
+    log.check("no selection falls back", PersonaStore.resolvePrompt(activeID: nil, personas: roster, fallback: "FALLBACK") == "FALLBACK")
+    log.check("deleted persona's id falls back (resolves as Custom)",
+          PersonaStore.resolvePrompt(activeID: UUID().uuidString, personas: roster, fallback: "FALLBACK") == "FALLBACK")
+
+    // (b) Custom-path fidelity: byte-for-byte the pre-persona expression —
+    // `string(forKey: "systemPrompt") ?? default` — for every fallback shape,
+    // including the explicit-empty "send no system prompt" law.
+    let legacyExpression = UserDefaults.standard.string(forKey: "systemPrompt") ?? ChatStore.defaultSystemPrompt
+    var customIdentical = true
+    for fallback in [ChatStore.defaultSystemPrompt, "My custom instructions.", "", legacyExpression] {
+        if PersonaStore.resolvePrompt(activeID: nil, personas: roster, fallback: fallback) != fallback
+            || PersonaStore.resolvePrompt(activeID: UUID().uuidString, personas: roster, fallback: fallback) != fallback {
+            customIdentical = false
+        }
+    }
+    log.check("Custom path is byte-identical for every fallback", customIdentical)
+    log.check("explicitly-empty prompt stays empty (no system prompt)",
+          PersonaStore.resolvePrompt(activeID: nil, personas: roster, fallback: "").isEmpty)
+
+    // (c) Seeding: three examples once, only into an empty unseeded install.
+    let seeded = PersonaStore.seedPersonas(existing: [], hasSeeded: false)
+    log.check("empty unseeded install gets the three examples",
+          seeded.count == 3 && seeded.map(\.name) == ["Translate", "Code Review", "Writing"],
+          "names=\(seeded.map(\.name))")
+    log.check("seed prompts are real prompts", seeded.allSatisfy { $0.prompt.count > 40 })
+
+    let mine = Persona(id: UUID(), name: "Mine", prompt: "Keep out.")
+    log.check("an existing list is never seeded over",
+          PersonaStore.seedPersonas(existing: [mine], hasSeeded: false) == [mine])
+    log.check("deleted examples do not revive after seeding",
+          PersonaStore.seedPersonas(existing: [], hasSeeded: true) == [])
+
+    // (d) Codec round-trip: what persist() writes, init() reads back.
+    do {
+        let data = try JSONEncoder().encode(roster)
+        let back = try JSONDecoder().decode([Persona].self, from: data)
+        log.check("personas round-trip through the store codec", back == roster)
+    } catch {
+        log.check("personas round-trip through the store codec", false, "threw: \(error)")
+    }
+
+    log.finish()
+}
+
 // Update check: version ordering and release decoding (no network).
 if CommandLine.arguments.contains("--smoke-update") {
     var log = CheckLog()
@@ -2578,13 +2901,13 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             size = NSSize(width: which == "switcher-effort" ? 530 : 412, height: 340)
         case "general":
             content = NSHostingView(rootView: SettingsView(
-                store: store, shortcutStore: ShortcutStore(),
+                store: store, shortcutStore: ShortcutStore(), personaStore: PersonaStore(),
                 updates: UpdateChecker(), tab: .general
             ))
             size = NSSize(width: 540, height: 620)
         case "about":
             content = NSHostingView(rootView: SettingsView(
-                store: store, shortcutStore: ShortcutStore(),
+                store: store, shortcutStore: ShortcutStore(), personaStore: PersonaStore(),
                 updates: UpdateChecker(), tab: .about
             ))
             size = NSSize(width: 540, height: 620)
@@ -2687,7 +3010,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             size = NSSize(width: 560, height: 560)
         default:
             content = NSHostingView(rootView: SettingsView(
-                store: store, shortcutStore: ShortcutStore(),
+                store: store, shortcutStore: ShortcutStore(), personaStore: PersonaStore(),
                 updates: UpdateChecker(), tab: .providers, editing: groq.id
             ))
             size = NSSize(width: 540, height: 620)

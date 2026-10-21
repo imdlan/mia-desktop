@@ -37,6 +37,10 @@ Four more need neither network nor GUI, plus one that drives the real composer:
 ```sh
 .build/debug/PopChat --smoke-rerun         # Retry / Edit prompt truncation, fork safety, ↑ history storage
 .build/debug/PopChat --smoke-chat-search   # cross-conversation body search + excerpts
+.build/debug/PopChat --smoke-export        # markdown/JSON export encoding, fork resolution, write loop
+.build/debug/PopChat --smoke-selection     # selection-quote block formatting (Services flow)
+.build/debug/PopChat --smoke-titling       # auto-naming guards, request shape, sanitize, legacy decode
+.build/debug/PopChat --smoke-persona      # persona prompt resolution precedence, seeding, Custom-path parity
 .build/debug/PopChat --smoke-reasoning     # reasoning wire spellings, waiting-row line, metrics-neutral styling
 .build/debug/PopChat --smoke-update        # version ordering + GitHub release decoding
 .build/debug/PopChat --smoke-recall        # ↑/↓ prompt recall through real arrow-key events (GUI)

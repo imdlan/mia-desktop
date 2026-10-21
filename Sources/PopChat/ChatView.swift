@@ -4,6 +4,9 @@ extension Notification.Name {
     static let popChatOpenSettings = Notification.Name("PopChatOpenSettings")
     /// Posted by FloatingPanel when ⌘V carries files/an image to attach.
     static let popChatAttachPasteboard = Notification.Name("PopChatAttachPasteboard")
+    /// Posted by the Services handler (AppDelegate.askWithSelection) with the
+    /// quoted selection as the object, for the composer to append.
+    static let popChatQuoteSelection = Notification.Name("PopChatQuoteSelection")
 }
 
 /// The "Glass" panel: translucent rounded shell, header chrome as overlay pills

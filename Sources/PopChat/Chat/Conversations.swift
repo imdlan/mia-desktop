@@ -11,6 +11,12 @@ struct Conversation: Codable, Identifiable {
     var parentID: UUID? = nil
     /// Last shared message (inclusive) in the parent's resolved transcript.
     var forkMessageID: UUID? = nil
+    /// True once P3 auto-naming has given this conversation its title. What
+    /// separates "model-written title" from "derived from the first message"
+    /// across restarts: persist() re-derives untitled conversations' titles
+    /// on every write, so this is the only thing that says "don't". Optional
+    /// so conversations written before auto-naming existed still decode.
+    var autoTitled: Bool? = nil
 }
 
 struct ConversationMeta: Identifiable, Equatable {
@@ -130,6 +136,20 @@ enum ConversationStore {
         guard let conversation = load(id: id) else { return nil }
         let (messages, missingParent) = resolveMessages(conversation)
         return (conversation, messages, missingParent)
+    }
+
+    /// The conversation as one standalone document: transcript resolved through
+    /// the fork chain, fork pointers cleared. What export (and any future
+    /// consumer wanting one self-contained file per chat) needs — unlike
+    /// `loadResolved`, which hands back the parts separately for chat display.
+    /// Materializes nothing on disk; the stored tail-only files are untouched.
+    static func resolved(_ id: UUID) -> Conversation? {
+        guard let (conversation, messages, _) = loadResolved(id: id) else { return nil }
+        var standalone = conversation
+        standalone.messages = messages
+        standalone.parentID = nil
+        standalone.forkMessageID = nil
+        return standalone
     }
 
     /// Direct children of `id` absorb the shared prefix and become standalone

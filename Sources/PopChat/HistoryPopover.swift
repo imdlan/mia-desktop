@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Recent-conversations popover, anchored off the clock pill (⌘Y). Type-to-filter,
 /// ↑/↓ to select and ↩ to open, day-group headers, delete (trash click or ⌘⌫).
@@ -40,6 +42,9 @@ struct HistoryPopover: View {
     /// this. Recomputing per access meant matching all fifty transcripts about
     /// seven times per keystroke, and once more on every hover.
     @State private var results: [Result] = []
+    /// Lightweight export outcome shown in the footer — the only feedback a
+    /// single export gives, so fifty exports never become fifty dialogs.
+    @State private var exportNote: String?
 
     struct Result: Identifiable {
         let meta: ConversationMeta
@@ -61,6 +66,9 @@ struct HistoryPopover: View {
         static let listInset: CGFloat = 8
         static let maxListHeight: CGFloat = 380
         static let emptyHeight: CGFloat = 56
+        /// Fixed, like every other row: the export footer joins the height the
+        /// popover opens at, which must be knowable before presentation (5c).
+        static let footerHeight: CGFloat = 28
         /// History rows are cheap, but not free — the filter trims anything past
         /// this and the list stays a plain VStack.
         static let renderCap = 40
@@ -78,6 +86,8 @@ struct HistoryPopover: View {
             } else {
                 list
             }
+            Divider()
+            exportFooter
         }
         .frame(width: Metrics.width)
         // Pop from the clock pill rather than materialize: origin top-right,
@@ -163,6 +173,108 @@ struct HistoryPopover: View {
                 .frame(height: Metrics.groupHeader, alignment: .bottomLeading)
         case let .chat(result):
             row(result)
+        }
+    }
+
+    /// The export entry points: Export All on the left of the note it last
+    /// produced. Same inset/font family as the filter row, so the footer reads
+    /// as part of the chrome rather than a row that failed to group.
+    private var exportFooter: some View {
+        HStack(spacing: 6) {
+            if let exportNote {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.color(accentHex))
+                Text(exportNote)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            Button("Export All…") { exportAllToFolder() }
+                .buttonStyle(.link)
+                .font(.system(size: 11))
+                .disabled(store.recent.isEmpty)
+                .help("Export every conversation as Markdown plus a combined JSON backup")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: Metrics.footerHeight)
+    }
+
+    // MARK: - Export (P1)
+
+    private enum ExportFormat {
+        case markdown, json
+
+        var fileExtension: String { self == .markdown ? ".md" : ".json" }
+
+        var contentType: UTType {
+            self == .markdown ? UTType(filenameExtension: "md") ?? .plainText : .json
+        }
+
+        func payload(for conversation: Conversation) throws -> Data {
+            switch self {
+            case .markdown: Data(ConversationExport.markdown(conversation: conversation).utf8)
+            case .json: try ConversationExport.json(conversation: conversation)
+            }
+        }
+    }
+
+    /// One conversation to a file the user names. Resolution is synchronous
+    /// and fine on the main actor — a single transcript decodes in
+    /// milliseconds — and the write only happens for a URL the user confirmed,
+    /// so nothing here has to outlive the popover.
+    private func export(_ meta: ConversationMeta, as format: ExportFormat) {
+        guard let conversation = ConversationStore.resolved(meta.id) else {
+            exportNote = "Couldn't read chat"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [format.contentType]
+        panel.nameFieldStringValue = ConversationExport.filenameBase(for: conversation) + format.fileExtension
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try format.payload(for: conversation).write(to: url, options: [.atomic])
+            exportNote = "Exported \(url.lastPathComponent)"
+        } catch {
+            exportNote = "Export failed"
+        }
+    }
+
+    /// Every stored conversation into a chosen folder: one `.md` each plus a
+    /// merged `conversations.json`. Resolution and writes run off the main
+    /// actor for the same reason `searchableText` does — decoding fifty
+    /// transcripts is milliseconds, but the popover must never jank paying it.
+    private func exportAllToFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.message = "Choose a folder for the exported conversations."
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+        let ids = store.recent.map(\.id)
+        exportNote = "Exporting \(ids.count) chats…"
+        Task {
+            let outcome = await Task.detached(priority: .userInitiated) {
+                // A conversation that fails to resolve (deleted mid-run) is a
+                // failure, not a silent skip — the summary must not overcount.
+                let conversations = ids.compactMap { ConversationStore.resolved($0) }
+                let result = ConversationExport.exportAll(conversations: conversations, to: directory)
+                return (result.written, result.failed + ids.count - conversations.count)
+            }.value
+            exportNote = "Exported \(outcome.0) chats"
+            // One dialog for the whole folder; per-chat dialogs would be a storm.
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = outcome.1 == 0
+                ? "Exported \(outcome.0) conversations"
+                : "Exported \(outcome.0) of \(ids.count) conversations"
+            alert.informativeText = outcome.1 == 0
+                ? directory.path
+                : "\(directory.path)\n\(outcome.1) file(s) could not be written."
+            alert.runModal()
         }
     }
 
@@ -303,6 +415,13 @@ struct HistoryPopover: View {
         }
         .buttonStyle(.plain)
         .id(meta.id)
+        // Right-click export without opening the chat (P1). The menu reads the
+        // stored file at click time via `resolved`, so a fork exports its full
+        // transcript even though the popover only ever lists metadata.
+        .contextMenu {
+            Button("Export Markdown…") { export(meta, as: .markdown) }
+            Button("Export JSON…") { export(meta, as: .json) }
+        }
         .onHover { inside in
             if inside {
                 hoveredID = meta.id

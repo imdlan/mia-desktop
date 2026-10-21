@@ -7,6 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let providerStore = ProviderStore()
     private let shortcutStore = ShortcutStore()
+    /// Owned here (not built inside SettingsView) so the seed examples land
+    /// at FIRST LAUNCH, not at first Settings open (P4 R4.3), and so reopening
+    /// Settings reuses the same list the picker and ChatStore read.
+    private let personaStore = PersonaStore()
     private let updateChecker = UpdateChecker()
     private lazy var panelController = PanelController(providerStore: providerStore, shortcutStore: shortcutStore)
     private var settingsWindow: NSWindow?
@@ -35,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panelController.toggle()
         }
 
+        // P2 "ask about selection": the Services item declared in Info.plist
+        // (NSServices → NSMessage) is delivered here. Registered at launch so
+        // macOS can offer the service as soon as the menu bar item exists;
+        // NSApp retains the provider, and the delegate outlives the app.
+        NSApp.servicesProvider = self
+
         // "Dismiss PopChat" means all of it: a floating Settings window left
         // hovering over the app the user returned to reads as stuck. Only
         // USER-initiated dismissals (hotkey, Esc, ⌘W, close button) fire this —
@@ -53,12 +63,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Read while the launch Apple event is still the current one — by the
         // time the block below runs it is gone.
         let loginItem = launchedAsLoginItem
+        // Also read BEFORE presentLaunchUI records it: "has this install run
+        // before" decides whether the orientation popover is already behind us,
+        // which is when the one-time Services hint may take its turn.
+        let ranBefore = UserDefaults.standard.bool(forKey: Self.hasLaunchedKey)
 
         // Build the panel + view hierarchy and load the resumed conversation off
         // the critical path, so the first hotkey press shows a warm panel.
         DispatchQueue.main.async { [weak self] in
             self?.panelController.prewarm()
             self?.presentLaunchUI(loginItem: loginItem)
+        }
+
+        // One-time pointer at "Ask PopChat About Selection" (P2): the service
+        // must be enabled — and is best given a shortcut — in System Settings,
+        // which nobody guesses. Deliberately NOT on the first launch ever
+        // (that one already gets the orientation popover; two hints at once
+        // teach nothing) and never on a login-item launch, like everything
+        // else that greets. FirstRunHint enforces the once-ever flag itself.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard ranBefore, !loginItem, let button = self?.statusItem.button else { return }
+            FirstRunHint.showServicesHint(from: button)
         }
 
         // Not in the prewarm block: launch has nothing to gain from it, and the
@@ -171,6 +196,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.toggle()
     }
 
+    // MARK: - Services (P2: ask about selection)
+
+    /// The "Ask PopChat About Selection" Services item (Info.plist NSServices →
+    /// NSMessage). The selection arrives on the pasteboard; a blank one still
+    /// shows the panel — "ask, no quote" beats a menu item that does nothing.
+    ///
+    /// `show()`, not `toggle()`: the service always means "appear", never
+    /// "dismiss" — a second invocation with the panel already up must add the
+    /// quote, not eat the panel. And it is the same nonactivating path ⌥Space
+    /// takes: the panel orders in over the source app without activating
+    /// PopChat, so the user's document keeps focus; the composer still becomes
+    /// first responder (show() bumps focusBump), which is what makes the
+    /// prefilled quote immediately editable.
+    @objc func askWithSelection(_ pboard: NSPasteboard, userData: String, error: NSErrorPointer) {
+        if !panelController.isPanelOnScreen {
+            panelController.show()
+        }
+        // Services may deliver either the modern UTF8 type or the legacy
+        // NSStringPboardType this app declares; either spelling is the text.
+        let selection = pboard.string(forType: .string)
+            ?? pboard.string(forType: NSPasteboard.PasteboardType(rawValue: "NSStringPboardType"))
+            ?? ""
+        let quote = SelectionQuote.quote(selection)
+        guard !quote.isEmpty else { return }
+        // The composer's draft is private to ComposerView by design (keystrokes
+        // must never invalidate the transcript), so cross-boundary injections
+        // go through the same one-shot NotificationCenter channel the
+        // pasteboard-attachment path uses.
+        NotificationCenter.default.post(name: .popChatQuoteSelection, object: quote)
+    }
+
+
     /// PopChat never installs anything itself — this hands the user off to the
     /// release page, where the DMG they already know how to use is waiting.
     @objc private func openReleasePage() {
@@ -256,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the tabs. `title` also feeds Exposé and accessibility.
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .visible
-            window.contentView = NSHostingView(rootView: SettingsView(store: providerStore, shortcutStore: shortcutStore, updates: updateChecker))
+            window.contentView = NSHostingView(rootView: SettingsView(store: providerStore, shortcutStore: shortcutStore, personaStore: personaStore, updates: updateChecker))
             window.isReleasedWhenClosed = false
             // The chat panel floats (.floating level); a normal-level Settings
             // window would always open BEHIND it. Same level + orderFront wins.

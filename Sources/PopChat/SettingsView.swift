@@ -31,12 +31,21 @@ struct SettingsView: View {
 
     @ObservedObject var store: ProviderStore
     @ObservedObject var shortcutStore: ShortcutStore
+    @ObservedObject var personaStore: PersonaStore
     @ObservedObject var updates: UpdateChecker
     @State private var tab: Tab
     @State private var searchKeyDraft = ""
-    @State private var systemPromptDraft = ChatStore.systemPrompt
+    /// Seeds from the CUSTOM prompt, not the resolved one: with a persona
+    /// active, seeding from ChatStore.systemPrompt would prefill the persona's
+    /// text into the Custom editor, where a stray keystroke would adopt it as
+    /// the user's own prompt.
+    @State private var systemPromptDraft = UserDefaults.standard.string(forKey: "systemPrompt") ?? ChatStore.defaultSystemPrompt
     @AppStorage("searchEngine") private var searchEngine = SearchEngineChoice.duckduckgo.rawValue
     @AppStorage("webSearchEnabled") private var webEnabled = true
+    /// Default ON via the @AppStorage default (never-written key reads true);
+    /// ChatStore.autoTitleEnabled mirrors it with object(forKey:) for the same
+    /// reason webSearchEnabled does — bool(forKey:) turns missing into false.
+    @AppStorage("autoTitleEnabled") private var autoTitleEnabled = true
     @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
     @AppStorage("customAccentColor") private var customAccentHex = ""
     @AppStorage("bubbleStyle") private var bubbleStyleRaw = BubbleStyle.accentTint.rawValue
@@ -78,10 +87,12 @@ struct SettingsView: View {
 
     init(
         store: ProviderStore, shortcutStore: ShortcutStore,
+        personaStore: PersonaStore,
         updates: UpdateChecker, tab: Tab = .general, editing: UUID? = nil
     ) {
         self.store = store
         self.shortcutStore = shortcutStore
+        self.personaStore = personaStore
         self.updates = updates
         _tab = State(initialValue: tab)
         initialEditingID = editing
@@ -1010,14 +1021,84 @@ struct SettingsView: View {
                     }
                     .disabled(systemPromptDraft == ChatStore.defaultSystemPrompt)
                 }
+                // Editing a prompt that isn't the one being sent invites a
+                // "my changes did nothing" report; the persona section below
+                // owns the wire while one is active.
+                .disabled(personaStore.activeID != nil)
                 .onChange(of: systemPromptDraft) { _, newValue in
                     UserDefaults.standard.set(newValue, forKey: "systemPrompt")
                 }
             } header: {
                 sectionHeader("System Prompt")
             } footer: {
-                sectionFooter("Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt.")
+                sectionFooter(personaStore.activeID == nil
+                    ? "Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt."
+                    : "A persona is active, so its prompt — not this one — is sent. Switch to Custom above to edit here.")
                     .help("Content the model wraps in <pasteable title=\"…\"> … </pasteable> tags is rendered as a copyable card in the transcript.")
+            }
+            Section {
+                Picker("Active persona", selection: $personaStore.activeID) {
+                    Text("Custom").tag(String?.none)
+                    ForEach(personaStore.personas) { persona in
+                        Text(persona.name).tag(String?.some(persona.id.uuidString))
+                    }
+                }
+                ForEach($personaStore.personas) { $persona in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 2) {
+                            TextField("name", text: $persona.name)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 13, weight: .medium))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Color.primary.opacity(0.04),
+                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
+                                )
+                                .frame(width: 140)
+                            Spacer()
+                            Button(role: .destructive) {
+                                personaStore.remove(id: persona.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, height: 24)
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Delete persona")
+                        }
+                        editorWell {
+                            TextEditor(text: $persona.prompt)
+                                .font(.system(size: 12))
+                                .scrollContentBackground(.hidden)
+                                .frame(height: 56)
+                                .overlay(alignment: .topLeading) {
+                                    if persona.prompt.isEmpty {
+                                        Text("System prompt this persona sends")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.tertiary)
+                                            .padding(.leading, 5)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                Button("Add Persona…") {
+                    personaStore.add()
+                }
+            } header: {
+                sectionHeader("Personas")
+            } footer: {
+                sectionFooter("The active persona's prompt is sent with every conversation. Custom uses the free-text system prompt.")
+                    .help("Deleting the active persona switches back to Custom.")
             }
             Section {
                 ForEach($shortcutStore.shortcuts) { $shortcut in
@@ -1083,6 +1164,14 @@ struct SettingsView: View {
             } footer: {
                 sectionFooter("Type “/name your text” in the chat field.")
                     .help("The compact form is shown in the transcript; the expanded template is what the model receives.")
+            }
+            Section {
+                Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
+            } header: {
+                sectionHeader("Titles")
+            } footer: {
+                sectionFooter("After a reply lands, the current provider is asked once for a short title (≤24 tokens). Failures are silent; OpenAI-compatible providers only.")
+                    .help("The title replaces the truncated first message in history once the first reply completes. A conversation is asked at most once.")
             }
             Section {
                 Toggle("Web access available to the model", isOn: $webEnabled)

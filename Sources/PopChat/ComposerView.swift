@@ -12,6 +12,11 @@ final class ComposerModel: ObservableObject {
     /// a mirror of the draft, which stays private to the composer so keystrokes
     /// never reach the transcript.
     @Published var injectedDraft: String?
+    /// Same one-shot channel as `injectedDraft`, but APPENDS a new paragraph
+    /// instead of replacing the draft: the Services "ask about selection"
+    /// flow (P2) can arrive while a half-typed question is sitting in the
+    /// field, and losing it would read as the quote stealing the composer.
+    @Published var appendedQuote: String?
 
     func handleFiles(_ urls: [URL]) {
         attachNotice = nil
@@ -380,8 +385,22 @@ struct ComposerView: View {
             recall = nil
             onFocusRequest()
         }
+        .onChange(of: model.appendedQuote) { _, quote in
+            guard let quote else { return }
+            model.appendedQuote = nil
+            // Append, never replace: a draft already in the field is a question
+            // in progress; the quoted selection joins it as a new paragraph
+            // (the quote itself ends with the blank line the caret lands on).
+            draft = draft.isEmpty ? quote : draft + "\n\n" + quote
+            recall = nil
+            onFocusRequest()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .popChatAttachPasteboard)) { _ in
             model.handlePasteboard()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popChatQuoteSelection)) { note in
+            guard let quote = note.object as? String else { return }
+            model.appendedQuote = quote
         }
     }
 
