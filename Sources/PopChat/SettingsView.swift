@@ -6,25 +6,23 @@ import ServiceManagement
 /// System Settings-style window: toolbar tabs over a grouped form per tab.
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case general, providers, webSearch, commands, hotkey
+        case general, appearance, providers, chat
 
         var id: String { rawValue }
         var label: String {
             switch self {
             case .general: "General"
+            case .appearance: "Appearance"
             case .providers: "Providers"
-            case .webSearch: "Web Search"
-            case .commands: "Commands"
-            case .hotkey: "Hotkey"
+            case .chat: "Chat"
             }
         }
         var icon: String {
             switch self {
             case .general: "gearshape"
+            case .appearance: "paintpalette"
             case .providers: "key"
-            case .webSearch: "globe"
-            case .commands: "slash.circle"
-            case .hotkey: "keyboard"
+            case .chat: "message"
             }
         }
     }
@@ -94,15 +92,18 @@ struct SettingsView: View {
             Group {
                 switch tab {
                 case .general: generalTab
+                case .appearance: appearanceTab
                 case .providers: providersTab
-                case .webSearch: webSearchTab
-                case .commands: commandsTab
-                case .hotkey: hotkeyTab
+                case .chat: chatTab
                 }
             }
             .formStyle(.grouped)
         }
         .frame(width: 540, height: 620)
+        // Let the page reach the window's top edge so the tab strip and the
+        // traffic lights sit on one continuous panel. No-op in a plain titled
+        // window (the design-QA harness), which has no titlebar inset.
+        .ignoresSafeArea()
         .onAppear { searchKeyDraft = currentSearchKey() }
         .onChange(of: searchEngine) { _, _ in searchKeyDraft = currentSearchKey() }
     }
@@ -118,6 +119,8 @@ struct SettingsView: View {
                             .font(.system(size: 19))
                         Text(item.label)
                             .font(.system(size: 10.5))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .frame(width: 76, height: 52)
                     .background(
@@ -131,7 +134,11 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        // Headroom for the traffic lights: the tab row is centered and the
+        // close button sits top-left, so only the strip's top edge needs the
+        // space once the content is full-bleed.
+        .padding(.top, 28)
+        .padding(.bottom, 8)
     }
 
     // MARK: - General
@@ -158,26 +165,46 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
+            } header: {
+                sectionHeader("Startup")
             }
             Section {
                 updateRow
                 Toggle("Check for updates automatically", isOn: $automaticUpdateChecks)
+            } header: {
+                sectionHeader("Updates")
             } footer: {
-                Text("PopChat checks GitHub Releases once a day and tells you when a newer version exists. It never downloads or installs anything — updating is opening the release page and dragging the new build to Applications, same as the first time.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                sectionFooter("PopChat checks GitHub Releases once a day and tells you when a newer version exists. It never downloads or installs anything — updating is opening the release page and dragging the new build to Applications, same as the first time.")
             }
+            Section {
+                KeyboardShortcuts.Recorder("Toggle PopChat:", name: .togglePopChat)
+            } header: {
+                sectionHeader("Show & Hide")
+            } footer: {
+                sectionFooter("If ⌥Space is taken by another app, unbind it there or record a different shortcut.")
+            }
+        }
+    }
+
+    private var appearanceTab: some View {
+        Form {
             Section {
                 appearanceRow
                 accentRow
+                liquidGlassRow
+                panelTintRow
+            } header: {
+                sectionHeader("Appearance")
+            } footer: {
+                sectionFooter("Panel tint defaults to the system glass appearance; the slider overrides it for PopChat only. Reduce Transparency always wins.")
+            }
+            Section {
                 Picker("Your message style", selection: $bubbleStyleRaw) {
                     ForEach(BubbleStyle.allCases) { style in
                         Text(style.label).tag(style.rawValue)
                     }
                 }
                 .pickerStyle(.segmented)
-                liquidGlassRow
-                panelTintRow
                 Picker("Streaming text", selection: $streamingModeRaw) {
                     ForEach(StreamingMode.allCases) { mode in
                         Text(mode.label).tag(mode.rawValue)
@@ -186,11 +213,9 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 previewRow
             } header: {
-                Text("Chat Style")
+                sectionHeader("Messages")
             } footer: {
-                Text("Applies to your messages in the panel. Custom opens a picker for any accent color; Accent fill flips its text between black and white for whichever reads better. Streaming text: Per-character fades in glyph by glyph, Per-sentence commits a sentence at a time. Defaults: Accent tint, Blue, Per-character streaming. Panel tint defaults to the system glass appearance; the slider overrides it for PopChat only. Reduce Transparency always wins.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                sectionFooter("Applies to your messages in the panel. Custom opens a picker for any accent color; Accent fill flips its text between black and white for whichever reads better. Streaming text: Per-character fades in glyph by glyph, Per-sentence commits a sentence at a time. Defaults: Accent tint, Blue, Per-character streaming.")
             }
         }
     }
@@ -230,6 +255,8 @@ struct SettingsView: View {
                 .disabled(updates.state == .checking)
         }
     }
+
+    // MARK: - Appearance
 
     /// Auto / Light / Dark (4f). Applied through NSApp.appearance so every
     /// window flips together; Auto (nil) tracks the system live.
@@ -360,12 +387,10 @@ struct SettingsView: View {
     private var providersTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Providers")
-                    .font(.system(size: 11, weight: .semibold))
-                    .textCase(.uppercase)
-                    .tracking(0.4)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 2)
+                sectionHeader("Providers")
+                    // Matches the grouped Form's own header inset on the other
+                    // tabs (they sit ~10pt in from the card edge).
+                    .padding(.leading, 10)
                 VStack(spacing: 0) {
                     ForEach(Array(store.providers.enumerated()), id: \.element.id) { offset, provider in
                         if offset > 0 {
@@ -964,39 +989,13 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Web Search
-
-    private var webSearchTab: some View {
-        Form {
-            Section {
-                Toggle("Web access available to the model", isOn: $webEnabled)
-                Picker("Search engine", selection: $searchEngine) {
-                    ForEach(SearchEngineChoice.allCases) { choice in
-                        Text(choice.label).tag(choice.rawValue)
-                    }
-                }
-                if let account = SearchEngineChoice(rawValue: searchEngine)?.apiKeyAccount {
-                    SecureField("Search API Key", text: $searchKeyDraft)
-                        .onChange(of: searchKeyDraft) { _, newValue in
-                            SecretStore.set(newValue, account: account)
-                        }
-                }
-            } footer: {
-                Text("The model decides when to search (max 5 tool rounds).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("web_search + fetch_url tools. Provider-native uses OpenRouter's server-side plugin and only applies when OpenRouter is the active provider; other choices fall back to DuckDuckGo with a visible notice.")
-            }
-        }
-    }
-
-    // MARK: - Commands
+    // MARK: - Chat
 
     // Real editors (4e): prompts leave the Form's label/value pattern — a
     // vertical-axis TextField rendered the template as a right-aligned trailing
     // "value" that grew with content. Fixed-height TextEditors in quaternary
     // wells scroll their own text; the Form scrolls the page.
-    private var commandsTab: some View {
+    private var chatTab: some View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1015,11 +1014,9 @@ struct SettingsView: View {
                     UserDefaults.standard.set(newValue, forKey: "systemPrompt")
                 }
             } header: {
-                Text("System Prompt")
+                sectionHeader("System Prompt")
             } footer: {
-                Text("Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                sectionFooter("Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt.")
                     .help("Content the model wraps in <pasteable title=\"…\"> … </pasteable> tags is rendered as a copyable card in the transcript.")
             }
             Section {
@@ -1081,11 +1078,30 @@ struct SettingsView: View {
                     let newID = shortcutStore.shortcuts.last?.id
                     DispatchQueue.main.async { focusedCommandName = newID }
                 }
+            } header: {
+                sectionHeader("Slash Commands")
             } footer: {
-                Text("Type “/name your text” in the chat field.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                sectionFooter("Type “/name your text” in the chat field.")
                     .help("The compact form is shown in the transcript; the expanded template is what the model receives.")
+            }
+            Section {
+                Toggle("Web access available to the model", isOn: $webEnabled)
+                Picker("Search engine", selection: $searchEngine) {
+                    ForEach(SearchEngineChoice.allCases) { choice in
+                        Text(choice.label).tag(choice.rawValue)
+                    }
+                }
+                if let account = SearchEngineChoice(rawValue: searchEngine)?.apiKeyAccount {
+                    SecureField("Search API Key", text: $searchKeyDraft)
+                        .onChange(of: searchKeyDraft) { _, newValue in
+                            SecretStore.set(newValue, account: account)
+                        }
+                }
+            } header: {
+                sectionHeader("Web Search")
+            } footer: {
+                sectionFooter("The model decides when to search (max 5 tool rounds).")
+                    .help("web_search + fetch_url tools. Provider-native uses OpenRouter's server-side plugin and only applies when OpenRouter is the active provider; other choices fall back to DuckDuckGo with a visible notice.")
             }
         }
     }
@@ -1105,21 +1121,25 @@ struct SettingsView: View {
             )
     }
 
-    // MARK: - Hotkey
+    // MARK: - Helpers
 
-    private var hotkeyTab: some View {
-        Form {
-            Section {
-                KeyboardShortcuts.Recorder("Toggle PopChat:", name: .togglePopChat)
-            } footer: {
-                Text("If ⌥Space is taken by another app, unbind it there or record a different shortcut.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
+    /// Section caption shared by every tab — the Providers page's title style,
+    /// promoted to the whole window.
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .textCase(.uppercase)
+            .tracking(0.4)
+            .foregroundStyle(.secondary)
     }
 
-    // MARK: - Helpers
+    /// Section footnote shared by every tab.
+    private func sectionFooter(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
 
     /// Default model for the EDITED provider — never the selected one. Settings
     /// no longer has a selection to piggyback on (delta 5).

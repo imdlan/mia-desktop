@@ -240,11 +240,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let window = DismissOnEscWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 540, height: 620),
-                styleMask: [.titled, .closable],
+                styleMask: [.titled, .closable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
             window.title = "PopChat Settings"
+            // The tab strip IS the titlebar: one continuous panel from the
+            // traffic lights down through the form. `title` stays set for
+            // Exposé and accessibility.
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
             window.contentView = NSHostingView(rootView: SettingsView(store: providerStore, shortcutStore: shortcutStore, updates: updateChecker))
             window.isReleasedWhenClosed = false
             // The chat panel floats (.floating level); a normal-level Settings
