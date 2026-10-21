@@ -223,17 +223,9 @@ enum Theme {
         dark ? Color.white.opacity(0.12) : Color.black.opacity(0.10)
     }
 
-    static func liftedDivider(dark: Bool) -> Color {
-        dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
-    }
-
     /// Recessed surface — code blocks.
     static func recessedFill(dark: Bool) -> Color {
         dark ? Color.black.opacity(0.35) : Color.black.opacity(0.05)
-    }
-
-    static func recessedHeader(dark: Bool) -> Color {
-        dark ? Color.white.opacity(0.04) : Color.black.opacity(0.03)
     }
 
     static func recessedBorder(dark: Bool) -> Color {

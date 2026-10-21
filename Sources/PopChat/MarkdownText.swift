@@ -838,7 +838,13 @@ struct CodeBlockView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Theme.recessedHeader(dark: dark))
+            // Hairline separator matched to the block's own 0.5pt recessed
+            // border — same color, same construct, so the two read as one.
+            Color.clear
+                .frame(height: 0.5)
+                .overlay(
+                    Rectangle().strokeBorder(Theme.recessedBorder(dark: dark), lineWidth: 0.5)
+                )
             ScrollView(.horizontal, showsIndicators: false) {
                 SelectableText(
                     attributed: MarkdownRenderer.highlightedCode(content, dark: dark),
@@ -970,8 +976,15 @@ struct PasteableBlockView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            Divider()
-                .overlay(Theme.liftedDivider(dark: dark))
+            // Hairline separator matched to the block's own 0.5pt lifted
+            // border. A system Divider carries its own separator tint, which
+            // stacks with the overlay color and renders visibly darker and
+            // thicker than the border does.
+            Color.clear
+                .frame(height: 0.5)
+                .overlay(
+                    Rectangle().strokeBorder(Theme.liftedBorder(dark: dark), lineWidth: 0.5)
+                )
             SelectableText(attributed: MarkdownRenderer.plain(content, size: 12.5), find: find)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
