@@ -21,12 +21,18 @@ final class UpdateChecker: ObservableObject {
     private static let checkInterval: TimeInterval = 24 * 60 * 60
 
     private static let lastCheckKey = "lastUpdateCheck"
-    /// Conditional-request cache. GitHub's unauthenticated quota is 60 req/h
-    /// per IP — shared with every other tool on the machine — so every check
-    /// spending one is what got users "rate-limited" on a personal app. An
-    /// `If-None-Match` revalidation that returns 304 does NOT count against
-    /// the quota, so the payload (and its ETag) from the last 200 is kept
-    /// here and replayed when GitHub says "unchanged".
+    /// Manual Check Now inside this window replays the cached answer with NO
+    /// request. GitHub's unauthenticated quota is 60 req/h per IP, shared with
+    /// every other tool on the machine, and measurement (2026-10-21) showed
+    /// even 304 revalidations decrement it — despite GitHub's docs — so not
+    /// sending the request is the only reliable quota saver. The scheduled
+    /// check needs no throttle; its 24 h interval already bounds it.
+    private static let manualCheckThrottle: TimeInterval = 10 * 60
+    /// Conditional-request cache from the last 200. With the throttle above
+    /// this is no longer about quota — it keeps a manual check that DOES go
+    /// out from re-downloading a payload it already has when the release
+    /// hasn't changed, and keeps the replayed answer identical to the one the
+    /// network gave.
     private static let etagKey = "updateCheckETag"
     private static let cachedVersionKey = "updateCheckCachedVersion"
     private static let cachedPageKey = "updateCheckCachedPage"
@@ -80,11 +86,19 @@ final class UpdateChecker: ObservableObject {
 
     /// The Settings button. Unlike the scheduled check this one always runs and
     /// always reports — including "you're up to date", which is the answer the
-    /// user pressed the button to get.
+    /// user pressed the button to get. Inside the throttle window it answers
+    /// from the cache without a request (see `manualCheckThrottle`).
     func check(userInitiated: Bool) {
         // `.checking` IS the in-flight flag — it is set here and reassigned on
         // every exit path, and Settings already disables its button on it.
         guard state != .checking else { return }
+        if userInitiated,
+           let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date,
+           Date().timeIntervalSince(last) < Self.manualCheckThrottle,
+           let cached = Self.cachedRelease() {
+            state = Self.isNewer(cached.version, than: Self.currentVersion) ? .available(cached) : .upToDate
+            return
+        }
         state = .checking
         Task { [weak self] in
             let result = await Self.fetchLatest()
