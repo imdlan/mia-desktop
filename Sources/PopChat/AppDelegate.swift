@@ -131,6 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let toggleItem = NSMenuItem(title: "Toggle PopChat", action: #selector(togglePanel), keyEquivalent: "")
         toggleItem.target = self
+        // Shows the recorded global hotkey on the right, and keeps itself in
+        // sync when the Recorder in Settings changes it.
+        toggleItem.setShortcut(for: .togglePopChat)
         menu.addItem(toggleItem)
 
         menu.addItem(.separator())
@@ -156,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quitItem = NSMenuItem(title: "Quit PopChat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
+        // Delegate disables the global hotkey while the menu tracks — see the
+        // NSMenuDelegate extension below.
+        menu.delegate = self
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
@@ -260,6 +266,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    // While the status menu is tracking, the global hotkey can't fire — its key
+    // events would just buffer up and dump into the panel the moment the menu
+    // closes. Unregister for the menu session instead (KeyboardShortcuts'
+    // documented pattern for shortcut-displaying menu items).
+    func menuWillOpen(_ menu: NSMenu) {
+        KeyboardShortcuts.disable(.togglePopChat)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        KeyboardShortcuts.enable(.togglePopChat)
     }
 }
 

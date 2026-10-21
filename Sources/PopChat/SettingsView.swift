@@ -6,7 +6,7 @@ import ServiceManagement
 /// System Settings-style window: toolbar tabs over a grouped form per tab.
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case general, appearance, providers, chat
+        case general, appearance, providers, chat, about
 
         var id: String { rawValue }
         var label: String {
@@ -15,6 +15,7 @@ struct SettingsView: View {
             case .appearance: "Appearance"
             case .providers: "Providers"
             case .chat: "Chat"
+            case .about: "About"
             }
         }
         var icon: String {
@@ -23,6 +24,7 @@ struct SettingsView: View {
             case .appearance: "paintpalette"
             case .providers: "key"
             case .chat: "message"
+            case .about: "info.circle"
             }
         }
     }
@@ -95,6 +97,7 @@ struct SettingsView: View {
                 case .appearance: appearanceTab
                 case .providers: providersTab
                 case .chat: chatTab
+                case .about: aboutTab
                 }
             }
             .formStyle(.grouped)
@@ -1116,6 +1119,40 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
             )
+    }
+
+    // MARK: - About
+
+    /// Centered identity block (Apple-About style) on the same page background
+    /// as the other tabs; credits and copyright ride the shared footer style.
+    /// The bundle icon comes from AppIcon.icns; the bare-binary harness falls
+    /// back to the generic app icon.
+    private var aboutTab: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 64)
+            VStack(spacing: 10) {
+                Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 48, height: 48)
+                Text("PopChat")
+                    .font(.system(size: 20, weight: .semibold))
+                Text("A mini AI chat app for quick, small (and usually temporary) chats.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 30)
+            }
+            Spacer(minLength: 24)
+            VStack(alignment: .leading, spacing: 6) {
+                sectionFooter("Thanks to the original author, Le Chen.")
+                sectionFooter("Copyright © 2026 Le Chen · Version \(UpdateChecker.currentVersion)")
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(formPageBackground)
     }
 
     // MARK: - Helpers
