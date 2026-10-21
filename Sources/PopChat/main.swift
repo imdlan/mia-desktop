@@ -2657,6 +2657,38 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                 shortcutStore: ShortcutStore(), onClose: {}
             ))
             size = NSSize(width: 560, height: 420)
+        case "timeline":
+            // Several finished turns so the question timeline has real markers
+            // to lay out (idle state only — hover needs a live pointer). Same
+            // scratch-store seeding as the transcript case, solid panel.
+            defaults.set(false, forKey: "liquidGlass")
+            let scratch = FileManager.default.temporaryDirectory
+                .appendingPathComponent("popchat-shot-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            ConversationStore.overrideDirectory = scratch
+            func turn(_ q: String, _ a: String) -> [ChatMessage] {
+                [ChatMessage(role: .user, text: q), ChatMessage(role: .assistant, text: a)]
+            }
+            ConversationStore.save(Conversation(
+                id: UUID(), title: "Timeline shot", updatedAt: Date(),
+                messages: [
+                    turn("Why is the sky blue?",
+                         "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction."),
+                    turn("Summarize the theory of relativity in one sentence",
+                         "Space and time form a single fabric whose geometry is shaped by mass and energy, and that geometry is what we experience as gravity."),
+                    turn("What's a good name for a cat?",
+                         "Something short and punchy — Miso, Pixel, or Biscuit all read well when you call them across a room."),
+                    turn("Explain HTTP status codes like I'm five",
+                         "They're the server's way of answering: 200 means \"here you go\", 404 means \"I looked and found nothing\", 500 means \"I broke\"."),
+                    turn("Write a haiku about rain",
+                         "Soft grey morning hush / every leaf holds a small sea / then lets it go home."),
+                ].flatMap { $0 }
+            ))
+            let chatStore = ChatStore(providerStore: store, shortcutStore: ShortcutStore())
+            content = NSHostingView(rootView: ChatView(
+                state: PanelState(), store: chatStore, providerStore: store,
+                shortcutStore: ShortcutStore(), onClose: {}
+            ))
+            size = NSSize(width: 560, height: 560)
         default:
             content = NSHostingView(rootView: SettingsView(
                 store: store, shortcutStore: ShortcutStore(),

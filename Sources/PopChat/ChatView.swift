@@ -284,6 +284,8 @@ struct ChatView: View {
         let activeHit = hits.indices.contains(findIndex) ? hits[findIndex] : nil
         let matchedIDs = Set(hits.map(\.messageID))
         let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The question timeline's markers: one per user turn, in order.
+        let timelineQuestions = store.messages.filter { $0.role == .user }
         // Retry / Edit prompt ride the last row that can host them (same
         // one-row gating trick as `find`): they re-run the last turn, so the end
         // of the transcript is both where they apply and where the eye already
@@ -412,6 +414,22 @@ struct ChatView: View {
                     newMessagesPill(proxy)
                         .padding(.bottom, 4)
                         .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                // Question timeline (TranscriptTimeline.swift): bars hover and
+                // jump via the same proxy the find bar scrolls with. The
+                // trailing alignment centers the column vertically, clear of
+                // the pills row above and the composer below.
+                if timelineQuestions.count > 1 {
+                    TranscriptTimeline(questions: timelineQuestions) { id in
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
+                    }
+                    // 8pt off the edge: leaves the transient system scrollbar
+                    // its own strip instead of sitting on the rail.
+                    .padding(.trailing, 8)
                 }
             }
             .animation(.easeOut(duration: 0.15), value: showNewMessagesPill)
