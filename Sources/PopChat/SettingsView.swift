@@ -1131,12 +1131,12 @@ struct SettingsView: View {
     }
 
     /// Section footnote shared by every tab: left-aligned, with a small info
-    /// glyph by the text. The symbol's own side bearings already put ~2pt of
-    /// air around the drawn circle, so spacing 0 lands the visual gap at 2pt.
+    /// glyph by the text. The 8pt symbol still carries ~1pt of side bearing,
+    /// so spacing 3 lands the visual gap at 4pt.
     private func sectionFooter(_ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
             Image(systemName: "info.circle")
-                .font(.system(size: 9))
+                .font(.system(size: 8))
             Text(text)
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
