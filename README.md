@@ -50,9 +50,8 @@ Open Settings from the menu bar icon or **⌘,** inside the panel.
 - **Providers** — pick a preset or add a custom OpenAI-compatible endpoint, paste an API key, and fetch the model list. **Add Provider…** also offers a *Free tiers* section (Groq, Google Gemini, Mistral, Cerebras, NVIDIA NIM, Cohere, Hugging Face) that fills in the right base URL and links where to get a key. ChatGPT-subscription access has two separate presets:
     - *OpenAI (Codex app-server)*: preferred. You must install and update Codex yourself, run `codex login` in Terminal, and ensure PopChat can find the `codex` executable (an explicit path field is available). PopChat only starts the local app-server; it does not install Codex or own/copy its login.
     - *OpenAI subscription (unofficial)*: the existing direct OAuth flow. It opens your browser and needs port 1455 during sign-in. Because it calls a backend not documented for third-party apps, it may break and may carry account or terms risk.
-- **Web Search** — choose the engine; Tavily/Brave need keys, DuckDuckGo doesn't.
-- **Commands** — edit the system prompt and define slash commands.
-- **Hotkey** — record whatever global shortcut you want (⌥Space by default).
+- **Chat** — edit the system prompt, define slash commands, and choose the web-search engine (Tavily/Brave need keys, DuckDuckGo doesn't).
+- **Show & Hide** (Settings › General) — record whatever global shortcut you want (⌥Space by default); the menu bar menu shows the current one next to *Toggle PopChat*.
 
 PopChat checks GitHub Releases once a day and tells you in Settings › General (and in the menu bar icon's menu) when a newer version exists. It never downloads or installs anything — you update by opening the release page and dragging the new build to Applications, the same way you installed it. Turn the check off in Settings › General.
 
@@ -101,6 +100,6 @@ MIT — see [LICENSE](LICENSE).
 
 ## Status
 
-Version 0.1.3 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
+Version 0.1.4 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
 
 The direct ChatGPT-subscription path is unofficial and potentially risky; it is retained for existing users but may break or conflict with account/usage terms. The preferred alternative delegates to the user's own Codex installation through the experimental `codex app-server` protocol. That path requires the user to install, authenticate, and maintain Codex, and may need compatibility updates as the protocol evolves.
