@@ -9,11 +9,15 @@ import SwiftUI
 /// the transcript to the question (same `ScrollViewReader` anchor the find bar
 /// uses). Hidden below two questions — a single-question timeline is noise.
 ///
+/// Deliberately animation-free: two rounds of testing showed that animating
+/// these values (springs on discrete hover events, animated collapse) made the
+/// bars seesaw and could drop hover re-entry, and every fix stacked more state
+/// on top. The pointer-driven values are already continuous while the pointer
+/// moves, so the tracking reads smoothly without any animation; state changes
+/// on entry/leave are instant.
+///
 /// The bars live in the trailing margin the bubbles never enter (bubble max
 /// width is 78% of the transcript), so the hover strip never blocks content.
-/// The view re-evaluates on every stream tick like the rest of the overlay
-/// chrome; it renders a handful of capsules and no text while idle, so it
-/// stays out of the row-repaint budget the Equatable-gated rows own.
 struct TranscriptTimeline: View {
     let questions: [ChatMessage]
     /// Jump callback — ChatView owns the `ScrollViewReader` proxy.
@@ -23,10 +27,11 @@ struct TranscriptTimeline: View {
     @State private var pointerY: CGFloat?
     /// The bar nearest the pointer — owns the tooltip and the accent tint.
     @State private var hovered: UUID?
-    /// Resting state: 2s after the pointer leaves, the whole column fades to
-    /// 40% so a bright affordance doesn't sit permanently in the margin.
+    /// Resting state: after 2s of the pointer being away, the whole column
+    /// drops to 40% opacity so a bright affordance doesn't sit permanently in
+    /// the margin.
     @State private var dimmed = false
-    @State private var dimTask: Task<Void, Never>?
+    @State private var dimWork: DispatchWorkItem?
     /// Natural single-line width of each question's text, measured offscreen.
     /// The tooltip needs this because an overlay proposes its CONTAINER's
     /// width — 24pt — to the bubble, which would wrap the text vertically.
@@ -54,59 +59,43 @@ struct TranscriptTimeline: View {
         .onContinuousHover { phase in
             switch phase {
             case .active(let location):
-                // Direct assignment — the widths are already continuous in the
-                // pointer position, so tracking needs no animation (animating
-                // each event is what made the bars seesaw).
-                pointerY = location.y
-                hovered = nearestQuestion(at: location.y)
-                wake()
+                activate(at: location.y)
             case .ended:
-                // Springy collapse when the pointer leaves the strip.
-                withAnimation(magnifyAnimation) {
-                    pointerY = nil
-                    hovered = nil
-                }
-                sleepThenDim()
+                deactivate()
             @unknown default:
                 break
             }
         }
         .opacity(dimmed ? 0.4 : 1)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: dimmed)
         .overlay(alignment: .trailing) {
             if let index = hoveredIndex {
                 thumbnail(questions[index])
-                    // Slide between bars as the nearest one changes.
                     .offset(x: -32, y: tooltipOffsetY(index))
-                    .transition(reduceMotion
-                        ? AnyTransition.opacity
-                        : AnyTransition.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
-                    .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: hovered)
+                    // Fade only — no scale/fly-in.
+                    .transition(.opacity)
             }
         }
         .background(naturalWidthMeasurements)
         .onPreferenceChange(TooltipWidthKey.self) { naturalWidths = $0 }
     }
 
-    /// Dock-style spring; instant for Reduce Motion.
-    private var magnifyAnimation: Animation? {
-        reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7)
-    }
+    // MARK: - Hover state machine (no animation)
 
-    /// Full opacity on entry; dims back after 2s of the pointer being away.
-    private func wake() {
-        dimTask?.cancel()
-        dimTask = nil
+    private func activate(at y: CGFloat) {
+        dimWork?.cancel()
+        dimWork = nil
         dimmed = false
+        pointerY = y
+        hovered = nearestQuestion(at: y)
     }
 
-    private func sleepThenDim() {
-        dimTask?.cancel()
-        dimTask = Task {
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            dimmed = true
-        }
+    private func deactivate() {
+        pointerY = nil
+        hovered = nil
+        dimWork?.cancel()
+        let work = DispatchWorkItem { dimmed = true }
+        dimWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
     // MARK: - Layout
@@ -120,8 +109,6 @@ struct TranscriptTimeline: View {
         guard needed > 300 else { return 6 }
         return max(1, (300 - CGFloat(count) * 3) / CGFloat(count - 1))
     }
-
-    // MARK: - Continuous magnification
 
     private var hoveredIndex: Int? {
         hovered.flatMap { id in questions.firstIndex { $0.id == id } }
@@ -162,9 +149,15 @@ struct TranscriptTimeline: View {
                 )
         }
         // The fixed row frame is what keeps the column's height stable while
-        // bar heights animate inside it — no jitter for the neighbors.
+        // bar heights change inside it — no jitter for the neighbors.
         .frame(width: 24, height: 14, alignment: .trailing)
         .contentShape(Rectangle())
+        // Belt and braces: if `onContinuousHover` misses the first re-entry
+        // after an `.ended`, the row-level hover still recovers activation.
+        .onHover { entering in
+            guard entering, pointerY == nil else { return }
+            activate(at: 7 + CGFloat(index) * rowPitch)
+        }
         .onTapGesture {
             onJump(question.id)
         }
@@ -181,7 +174,9 @@ struct TranscriptTimeline: View {
     /// fallback for long questions — plus the 18pt of horizontal padding the
     /// frame must include (padding is applied INSIDE the width, so the text
     /// area is `width - 18`: sizing the frame to the text width alone is what
-    /// wrapped two-character questions).
+    /// wrapped two-character questions). Hit-testing is off: the bubble is a
+    /// passive overlay, and letting it intercept hover caused a flicker loop
+    /// at the bubble/strip boundary.
     private func thumbnail(_ question: ChatMessage) -> some View {
         let natural = naturalWidths[question.id] ?? 240
         let textWidth = min(natural + 4, 240)
@@ -205,6 +200,7 @@ struct TranscriptTimeline: View {
                     .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
             )
             .shadow(color: Color.black.opacity(dark ? 0.4 : 0.15), radius: 4, y: 2)
+            .allowsHitTesting(false)
     }
 
     // MARK: - Natural text measurement
