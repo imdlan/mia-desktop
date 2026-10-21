@@ -13,7 +13,7 @@ import Foundation
 final class UpdateChecker: ObservableObject {
     /// The releases API for this app's own repository.
     nonisolated private static let latestReleaseURL = URL(
-        string: "https://api.github.com/repos/lec77/PopChat/releases/latest"
+        string: "https://api.github.com/repos/imdlan/PopChat/releases/latest"
     )!
 
     /// How long a check stays good. A menu-bar app can run for weeks, so this

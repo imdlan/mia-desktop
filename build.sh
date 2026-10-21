@@ -37,9 +37,33 @@ fi
 # --build-system native, explicitly: swift-build's newer default backend lays products
 # out differently (.build/out/Products/<Config>) and generates a different Bundle.module
 # accessor; the paths below and Sources/PopChatBundleShim are written against native.
-swift build -c "$CONFIG" --scratch-path "$SCRATCH" --build-system native ${SDK:+--sdk "$SDK"}
+#
+# POPCHAT_ARCHES="arm64 x86_64" builds a universal binary — each --arch adds a
+# slice. A universal build cannot share a scratch directory with single-arch
+# builds; point POPCHAT_SCRATCH at its own path.
+ARCH_FLAGS=""
+if [ -n "${POPCHAT_ARCHES:-}" ]; then
+    for arch in $POPCHAT_ARCHES; do ARCH_FLAGS="$ARCH_FLAGS --arch $arch"; done
+fi
+swift build -c "$CONFIG" --scratch-path "$SCRATCH" --build-system native ${SDK:+--sdk "$SDK"} $ARCH_FLAGS
 
-BIN="$SCRATCH/$CONFIG/PopChat"
+# Products land at different paths per build system and per arch set:
+#   native, single-arch:  $SCRATCH/$CONFIG/PopChat
+#   multi-arch (--arch):  $SCRATCH/apple/Products/$CONFIG/PopChat
+# Probe rather than assume, and always take the bundles from the directory the
+# binary was found in — they sit next to it in every layout.
+BIN=""
+for candidate in "$SCRATCH/$CONFIG/PopChat" \
+                 "$SCRATCH/apple/Products/$CONFIG/PopChat" \
+                 "$SCRATCH/universal/$CONFIG/PopChat" \
+                 "$SCRATCH/out/Products/$CONFIG/PopChat"; do
+    if [ -f "$candidate" ]; then BIN="$candidate"; break; fi
+done
+if [ -z "$BIN" ]; then
+    echo "error: built PopChat binary not found under $SCRATCH" >&2
+    exit 1
+fi
+PRODUCTS_DIR="$(cd "$(dirname "$BIN")" && pwd)"
 APP="dist/PopChat.app"
 
 rm -rf "$APP"
@@ -53,7 +77,7 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # CFBundleIco
 # SwiftMath traps the first time a message contains LaTeX.
 # -L is load-bearing: .build/<config> is a symlink to .build/<triple>/<config>, and
 # plain find will not descend into it, so this silently copied nothing.
-find -L "$SCRATCH/$CONFIG" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
+find -L "$PRODUCTS_DIR" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
 
 # Counted, not "is Resources empty" — the icon lives there too and would mask a miss.
 if [ "$(find "$APP/Contents/Resources" -maxdepth 1 -name "*.bundle" | wc -l)" -eq 0 ]; then

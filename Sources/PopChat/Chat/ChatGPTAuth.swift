@@ -365,21 +365,55 @@ enum ChatGPTAuth {
         if tokens.expiresAt > Date().addingTimeInterval(60) {
             return (tokens.accessToken, tokens.accountID)
         }
-        let refreshed = try await refresh(tokens)
+        let refreshed = try await refresh(force: false)
         return (refreshed.accessToken, refreshed.accountID)
     }
 
     /// Forces a refresh regardless of stored expiry — used after the backend
     /// rejects a token with 401 (revoked, or clock skew).
     static func refreshedCredentials() async throws -> (accessToken: String, accountID: String) {
-        guard let tokens = await MainActor.run(body: { loadTokens() }) else {
-            throw AuthError(message: "Not signed in to ChatGPT — open Settings → Providers and sign in.")
-        }
-        let refreshed = try await refresh(tokens)
+        let refreshed = try await refresh(force: true)
         return (refreshed.accessToken, refreshed.accountID)
     }
 
-    private static func refresh(_ tokens: Tokens) async throws -> Tokens {
+    /// Single-flight refresh gate. Two turns hitting 401/expiry at once must
+    /// share ONE token-endpoint request: spending the same refresh token twice
+    /// can invalidate it (rotation), and the loser's 400 would then force a
+    /// full sign-out for a session that was actually fine.
+    private static let refreshGate = NSLock()
+    private static var inFlightRefresh: Task<Tokens, Error>?
+
+    /// The first caller owns the token request; concurrent callers await its
+    /// result. `inFlightRefresh` is only ever assigned while it is nil (by the
+    /// owner, before awaiting), so the owner clearing it unconditionally on
+    /// completion can never drop a newer request — same law as
+    /// ProviderStore.codexRefresh.
+    private static func refresh(force: Bool) async throws -> Tokens {
+        refreshGate.lock()
+        if let inFlight = inFlightRefresh {
+            refreshGate.unlock()
+            return try await inFlight.value
+        }
+        let task = Task<Tokens, Error> { try await performRefresh(force: force) }
+        inFlightRefresh = task
+        refreshGate.unlock()
+        let refreshed = try await task.value
+        refreshGate.lock()
+        inFlightRefresh = nil
+        refreshGate.unlock()
+        return refreshed
+    }
+
+    private static func performRefresh(force: Bool) async throws -> Tokens {
+        // Reloaded here, not captured at gate-entry time: a caller that queued
+        // behind another refresh must see the tokens THAT refresh saved, or it
+        // would re-spend the pre-rotation refresh token.
+        guard let tokens = await MainActor.run(body: { loadTokens() }) else {
+            throw AuthError(message: "Not signed in to ChatGPT — open Settings → Providers and sign in.")
+        }
+        if !force, tokens.expiresAt > Date().addingTimeInterval(60) {
+            return tokens // a concurrent refresh already landed
+        }
         let response: TokenResponse
         do {
             response = try await tokenRequest(form: [

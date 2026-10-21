@@ -35,11 +35,28 @@ enum SecretStore {
     private static func save(_ secrets: [String: String]) {
         cache = secrets
         guard let data = try? JSONEncoder().encode(secrets) else { return }
-        try? data.write(to: fileURL, options: [.atomic])
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: fileURL.path
-        )
+        // Land 0600 from the first byte. The previous atomic-write-then-chmod
+        // left a window — and, on a failed chmod, a permanent state — where the
+        // secrets file was group/other readable. A 0600 temp file renamed into
+        // place keeps the atomicity of the old write AND the permissions.
+        let tempURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent("secrets-\(UUID().uuidString).tmp")
+        guard (try? data.write(to: tempURL, options: [.atomic])) != nil,
+              (try? FileManager.default.setAttributes(
+                  [.posixPermissions: 0o600], ofItemAtPath: tempURL.path
+              )) != nil else {
+            try? FileManager.default.removeItem(at: tempURL)
+            return
+        }
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: tempURL)
+            } else {
+                try FileManager.default.moveItem(at: tempURL, to: fileURL)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+        }
     }
 
     static func get(account: String) -> String? {

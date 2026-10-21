@@ -1076,6 +1076,10 @@ private final class Session: @unchecked Sendable {
                 message: "Couldn't start Codex at \(executable.path): \(error.localizedDescription)"
             )
         }
+        // Reap the child whenever it exits, so no teardown order (stop() →
+        // Session dealloc while the process is still winding down) can leave a
+        // zombie or deallocate a still-running Process.
+        process.terminationHandler = { _ in }
         // Drain stderr so a verbose app-server cannot fill its pipe and deadlock,
         // while retaining a short tail for launch/protocol failure messages.
         let stderr = errorOutput.fileHandleForReading

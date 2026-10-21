@@ -194,12 +194,102 @@ struct WebToolExecutor {
               ["http", "https"].contains(scheme.lowercased()) else {
             return "ERROR: only http(s) URLs can be fetched"
         }
+        if Self.isInternalTarget(url) {
+            return "ERROR: private, loopback and link-local addresses cannot be fetched"
+        }
         let html = try await getString(url: url, headers: [:])
         var text = Self.stripHTML(html)
         if text.count > Self.maxFetchCharacters {
             text = String(text.prefix(Self.maxFetchCharacters)) + "\n[Content truncated at \(Self.maxFetchCharacters) characters]"
         }
         return text.isEmpty ? "ERROR: page contained no extractable text" : text
+    }
+
+    // MARK: - Internal-address guard
+
+    /// True when `fetch_url` must refuse this URL: its host is loopback, this-
+    /// host, private, link-local, CGNAT, multicast/reserved, or otherwise not
+    /// public. Fetched page text is handed to the model, so a prompt-injected
+    /// turn must not be able to read localhost admin surfaces, LAN devices or
+    /// cloud-metadata endpoints and bring the contents back into the
+    /// conversation. Literal IPv4 is classified directly (no resolver round
+    /// trip, and a malformed dotted quad must not fall through to DNS);
+    /// everything else — hostnames AND IPv6 literals — is resolved and refused
+    /// when ANY record is internal. Unresolvable hosts fail closed: the tool
+    /// result says so, and the model can adapt.
+    ///
+    /// The one resolution here is synchronous and brief; it runs inside the
+    /// agentic loop's own task, never on the main actor.
+    static func isInternalTarget(_ url: URL) -> Bool {
+        guard var host = url.host(percentEncoded: false)?.lowercased(), !host.isEmpty else { return true }
+        host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) // IPv6 literal brackets
+        if host.isEmpty || host == "localhost" || host.hasSuffix(".localhost") { return true }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false).compactMap { Int($0) }
+        if octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) {
+            return isInternalIPv4(octets.map { UInt8($0) })
+        }
+        let addresses = resolveHost(host)
+        guard !addresses.isEmpty else { return true }
+        return addresses.contains(where: isInternalAddressString)
+    }
+
+    /// Classifies one address string. `getnameinfo(NI_NUMERICHOST)` answers in
+    /// canonical form (RFC 5952 for v6), so prefix checks against the compressed
+    /// spelling are safe.
+    private static func isInternalAddressString(_ address: String) -> Bool {
+        let lowered = address.lowercased()
+        guard lowered.contains(":") else {
+            let octets = lowered.split(separator: ".").compactMap { Int($0) }
+            guard octets.count == 4 else { return true } // unparsable — refuse
+            return isInternalIPv4(octets.map { UInt8($0) })
+        }
+        if lowered == "::" || lowered == "::1" { return true }        // unspecified, loopback
+        for prefix in ["fe8", "fe9", "fea", "feb", "fc", "fd"]        // link-local, ULA
+        where lowered.hasPrefix(prefix) { return true }
+        if lowered.hasPrefix("::ffff:") {                             // IPv4-mapped
+            let tail = lowered.dropFirst("::ffff:".count)
+            let octets = tail.split(separator: ".").compactMap { Int($0) }
+            guard octets.count == 4 else { return true }              // unparsable — refuse
+            return isInternalIPv4(octets.map { UInt8($0) })
+        }
+        return false
+    }
+
+    private static func isInternalIPv4(_ o: [UInt8]) -> Bool {
+        switch o[0] {
+        case 0, 10, 127: return true                            // this-host, private, loopback
+        case 169 where o[1] == 254: return true                 // link-local (metadata endpoints)
+        case 172 where (16...31).contains(o[1]): return true    // private
+        case 192 where o[1] == 168: return true                 // private
+        case 100 where (64...127).contains(o[1]): return true   // CGNAT (Tailscale et al.)
+        case 224...255: return true                             // multicast, reserved, broadcast
+        default: return false
+        }
+    }
+
+    /// Numeric address strings for `host`, empty when resolution failed.
+    private static func resolveHost(_ host: String) -> [String] {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        var results: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &results) == 0, let first = results else { return [] }
+        defer { freeaddrinfo(results) }
+        var addresses: [String] = []
+        var current: UnsafeMutablePointer<addrinfo>? = first
+        while let info = current {
+            let entry = info.pointee
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let status = getnameinfo(
+                entry.ai_addr, entry.ai_addrlen,
+                &buffer, socklen_t(buffer.count),
+                nil, 0, NI_NUMERICHOST
+            )
+            guard status == 0 else { return [] }
+            addresses.append(String(cString: buffer))
+            current = entry.ai_next
+        }
+        return addresses
     }
 
     // MARK: - Helpers

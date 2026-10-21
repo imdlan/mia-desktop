@@ -61,6 +61,30 @@ enum ConversationStore {
         try? data.write(to: url(for: conversation.id), options: [.atomic])
     }
 
+    /// The id of the most recently updated conversation WITHOUT decoding every
+    /// file: mtime-sorted enumeration, then decode candidates until one parses.
+    /// What the launch resume needs immediately (it loads that one conversation);
+    /// the full recent list — every transcript — is built off the main thread.
+    static func newestConversationID() -> UUID? {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+        let sorted = files
+            .filter { $0.pathExtension == "json" }
+            .sorted { stamp($0) > stamp($1) }
+        for file in sorted {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  load(id: id) != nil else { continue }
+            return id
+        }
+        return nil
+    }
+
+    private static func stamp(_ file: URL) -> Date {
+        let values = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+        return values?.contentModificationDate ?? .distantPast
+    }
+
     static func load(id: UUID) -> Conversation? {
         guard let data = try? Data(contentsOf: url(for: id)) else { return nil }
         let decoder = JSONDecoder()

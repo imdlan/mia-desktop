@@ -312,7 +312,7 @@ struct ComposerView: View {
     let isStreaming: Bool
     let focusBump: Int
     @Binding var editorMode: Bool
-    let onSend: (String, [Attachment]) -> Void
+    let onSend: (String, [Attachment]) -> Bool
     let onStop: () -> Void
     let onFocusRequest: () -> Void
     let onClose: () -> Void
@@ -779,10 +779,14 @@ struct ComposerView: View {
 
     private func submit() {
         guard !isStreaming, canSend else { return }
-        onSend(draft, model.pendingAttachments)
-        draft = ""
-        recall = nil
-        model.clear()
+        // Draft and attachments survive a send that didn't start (unknown
+        // shortcut, no provider, no model, no key): the error row names the fix,
+        // and the user should not have to re-attach files to retry.
+        if onSend(draft, model.pendingAttachments) {
+            draft = ""
+            recall = nil
+            model.clear()
+        }
     }
 }
 

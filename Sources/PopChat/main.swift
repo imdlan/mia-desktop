@@ -798,6 +798,32 @@ if CommandLine.arguments.contains("--smoke-update") {
     log.finish()
 }
 
+// fetch_url's internal-address guard (no network — every probe is a literal or
+// a .localhost name): loopback, this-host, RFC1918, link-local (incl. the cloud
+// metadata endpoint), CGNAT, ULA and multicast targets are refused, IPv4-mapped
+// IPv6 is classified through its embedded v4 address, and public addresses pass.
+//   .build/debug/PopChat --smoke-web-guard
+if CommandLine.arguments.contains("--smoke-web-guard") {
+    var log = CheckLog()
+    func probe(_ string: String) -> Bool { WebToolExecutor.isInternalTarget(URL(string: string)!) }
+    log.check("loopback is refused", probe("http://127.0.0.1:11434/v1"))
+    log.check("this-host is refused", probe("http://0.0.0.0/x"))
+    log.check("RFC1918 is refused",
+          probe("http://10.1.2.3/") && probe("http://192.168.1.1/")
+              && probe("http://172.16.0.1/") && probe("http://172.31.255.255/"))
+    log.check("a public 172.x is kept", !probe("http://172.32.0.1/"))
+    log.check("link-local is refused", probe("http://169.254.169.254/latest/meta-data/"))
+    log.check("CGNAT is refused", probe("http://100.100.1.1/"))
+    log.check("multicast is refused", probe("http://224.0.0.1/"))
+    log.check("localhost is refused", probe("http://localhost:8080/") && probe("http://api.localhost/"))
+    log.check("IPv6 loopback is refused", probe("http://[::1]/"))
+    log.check("IPv6 link-local is refused", probe("http://[fe80::1]/"))
+    log.check("IPv6 ULA is refused", probe("http://[fd00::1]/"))
+    log.check("IPv4-mapped IPv6 is refused", probe("http://[::ffff:192.168.0.1]/"))
+    log.check("public addresses are kept", !probe("http://8.8.8.8/") && !probe("http://93.184.216.34/"))
+    log.finish()
+}
+
 // Resource bundles: the dependencies' Bundle.module must resolve INSIDE the
 // assembled .app (no network). Only meaningful when run from dist/PopChat.app —
 // build.sh runs it there after assembly. "Didn't trap" alone proves nothing on
@@ -815,13 +841,26 @@ if CommandLine.arguments.contains("--smoke-bundles") {
     let recorder = KeyboardShortcuts.RecorderCocoa(for: .togglePopChat)
     log.check("the hotkey recorder constructs", recorder.shortcutName == .togglePopChat)
     log.check("a math font loads", MTFontManager.manager.latinModernFont(withSize: 12) != nil)
+    // Two toolchains, one law. CLT-27-era SwiftPM accessors only try the .app
+    // ROOT and the compile-time fallback, so the swizzle answers the root
+    // lookup and the redirect count rises. Xcode-16-era accessors check
+    // Bundle.main.resourceURL — Contents/Resources — FIRST and never reach the
+    // swizzle, so redirected stays 0. Either mechanism is fine as long as the
+    // bundles that LOAD are the in-app copies — that is the property issue #1
+    // (hotkey crash on a stranger's Mac) actually depends on.
     let redirected = PopChatResourceBundleRedirectCount()
-    log.check("both lookups were redirected into Contents/Resources", redirected >= 2,
-              "redirected=\(redirected)")
     // And the bundles the dependencies now hold ARE the in-app copies — not the
     // compile-time fallback, which on this machine usually still exists.
     let loaded = Set(Bundle.allBundles.map { $0.bundleURL.standardizedFileURL.path })
-    for name in ["KeyboardShortcuts_KeyboardShortcuts", "SwiftMath_SwiftMath"] {
+    let bundleNames = ["KeyboardShortcuts_KeyboardShortcuts", "SwiftMath_SwiftMath"]
+    let inAppLoaded = bundleNames.allSatisfy { name in
+        loaded.contains(
+            root.appendingPathComponent("Contents/Resources/\(name).bundle").standardizedFileURL.path
+        )
+    }
+    log.check("dependency bundles resolved inside the .app",
+              redirected >= 2 || inAppLoaded, "redirected=\(redirected) inAppLoaded=\(inAppLoaded)")
+    for name in bundleNames {
         let expected = root.appendingPathComponent("Contents/Resources/\(name).bundle").standardizedFileURL.path
         log.check("\(name) resolved to the in-app copy", loaded.contains(expected),
                   "loaded=\(loaded.filter { $0.hasSuffix(".bundle") }.sorted())")

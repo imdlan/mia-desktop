@@ -133,11 +133,35 @@ final class ChatStore: ObservableObject {
     init(providerStore: ProviderStore, shortcutStore: ShortcutStore) {
         self.providerStore = providerStore
         self.shortcutStore = shortcutStore
-        // Resume the most recent conversation across app restarts.
-        recent = ConversationStore.listRecent()
-        if let latest = recent.first, let loaded = ConversationStore.loadResolved(id: latest.id) {
+        // Resume the most recent conversation across app restarts. Only that
+        // ONE file decodes synchronously (mtime-sorted first candidate); the
+        // full recent list walks every transcript — attachment base64 and all —
+        // and used to stall launch on attachment-heavy stores, so it is built
+        // off the main actor and merged in when ready.
+        if let newest = ConversationStore.newestConversationID(),
+           let loaded = ConversationStore.loadResolved(id: newest) {
             adopt(loaded)
         }
+        // Detached: the scan decodes every transcript (attachment base64 and
+        // all) and must stay off the main actor. mergeRecent is MainActor-
+        // isolated, so the hop back is explicit in the await.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let metas = ConversationStore.listRecent()
+            await self?.mergeRecent(metas)
+        }
+    }
+
+    /// Backfills `recent` from the off-thread scan without clobbering live
+    /// updates: persist() has been keeping the list current since launch, so
+    /// only entries it cannot yet know about are added, then the usual
+    /// newest-first ordering and cap are restored.
+    private func mergeRecent(_ metas: [ConversationMeta]) {
+        let known = Set(recent.map(\.id))
+        for meta in metas where !known.contains(meta.id) {
+            recent.append(meta)
+        }
+        recent.sort { $0.updatedAt > $1.updatedAt }
+        recent = Array(recent.prefix(ConversationStore.maxStored))
     }
 
     private func adopt(_ loaded: (conversation: Conversation, messages: [ChatMessage], missingParent: Bool)) {
@@ -195,9 +219,10 @@ final class ChatStore: ObservableObject {
         UserDefaults.standard.string(forKey: "systemPrompt") ?? defaultSystemPrompt
     }
 
-    func send(_ text: String, attachments: [Attachment] = []) {
+    @discardableResult
+    func send(_ text: String, attachments: [Attachment] = []) -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty, !isStreaming else { return }
+        guard !text.isEmpty || !attachments.isEmpty, !isStreaming else { return false }
         // Recorded here rather than in the composer: this is where a prompt
         // becomes a SENT prompt, so ↑ also offers back anything a retry or a
         // future send path put through. Before the guards below, because a send
@@ -220,7 +245,7 @@ final class ChatStore: ObservableObject {
                     text: "Unknown shortcut “/\(name)”. Define it in Settings → Slash Commands, or escape the leading slash."
                 ))
                 persist()
-                return
+                return false
             }
             wireText = shortcut.expand(input: input)
         }
@@ -232,7 +257,7 @@ final class ChatStore: ObservableObject {
         guard let config = providerStore.currentConfig() else {
             messages.append(ChatMessage(role: .error, text: "No provider selected — open Settings…"))
             persist()
-            return
+            return false
         }
         let providerName = providerStore.selectedProvider?.name ?? "provider"
         if config.model.isEmpty {
@@ -241,7 +266,7 @@ final class ChatStore: ObservableObject {
                 text: "No model set for \(providerName). Pick one from the model menu (fetch the list first) or Settings."
             ))
             persist()
-            return
+            return false
         }
         switch config.kind {
         case .chatGPT:
@@ -251,7 +276,7 @@ final class ChatStore: ObservableObject {
                     text: "Not signed in to ChatGPT. Right-click the menu bar icon → Settings… → Providers → Sign in with ChatGPT."
                 ))
                 persist()
-                return
+                return false
             }
         case .codexAppServer:
             // No pre-flight here on purpose. CodexAppServerClient resolves the
@@ -269,7 +294,7 @@ final class ChatStore: ObservableObject {
                     text: "No API key for \(providerName). Add one in Settings → Providers (right-click the menu bar icon), or pick a configured provider from the model pill above."
                 ))
                 persist()
-                return
+                return false
             }
         }
 
@@ -428,6 +453,8 @@ final class ChatStore: ObservableObject {
             if stillOurs { streamingMessageID = nil }
             persist()
         }
+        // The turn actually started — the composer clears its draft/attachments.
+        return true
     }
 
     /// Writes a turn's thinking onto its assistant row, by id — a new turn can

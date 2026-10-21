@@ -279,6 +279,12 @@ struct PanelGlassBackground: View {
             solidFill
         } else {
             ZStack {
+                #if compiler(>=6.2)
+                // glassEffect is a macOS 26 SwiftUI API: only the toolchains
+                // whose SDK declares it (Swift 6.2+) can name it. Older ones —
+                // including any Intel/Xcode 16 build — compile the pre-26
+                // backdrop instead, which is exactly what macOS ≤ 25 shows at
+                // runtime anyway.
                 if #available(macOS 26.0, *) {
                     // glassEffect alone — a second live NSVisualEffectView backdrop
                     // underneath doubled the compositing cost for no visual gain.
@@ -294,18 +300,26 @@ struct PanelGlassBackground: View {
                         Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                     }
                 } else {
-                    VisualEffectBackground()
-                    if panelTint < 0 {
-                        // Pre-glass fallback default tint.
-                        scheme == .dark
-                            ? Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255).opacity(0.55)
-                            : Color(red: 250 / 255, green: 250 / 255, blue: 252 / 255).opacity(0.62)
-                    }
+                    preGlassBackdrop
                 }
+                #else
+                preGlassBackdrop
+                #endif
                 if panelTint >= 0 {
                     tintFill(min(panelTint, 1))
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var preGlassBackdrop: some View {
+        VisualEffectBackground()
+        if panelTint < 0 {
+            // Pre-glass fallback default tint.
+            scheme == .dark
+                ? Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255).opacity(0.55)
+                : Color(red: 250 / 255, green: 250 / 255, blue: 252 / 255).opacity(0.62)
         }
     }
 
