@@ -772,26 +772,22 @@ if CommandLine.arguments.contains("--smoke-update") {
     log.check("0.2.0-beta.1 is not newer than 0.2.0", !UpdateChecker.isNewer("0.2.0-beta.1", than: "0.2.0"))
 
     func payload(_ json: String) -> Data { Data(json.utf8) }
-    let good = UpdateChecker.decodeRelease(payload("""
-    {"tag_name":"v0.1.3","html_url":"https://github.com/lec77/PopChat/releases/tag/v0.1.3",
-     "draft":false,"prerelease":false}
-    """))
+    func url(_ s: String) -> URL { URL(string: s)! }
+    let good = UpdateChecker.decodeLatestTagPage(url(
+        "https://github.com/imdlan/PopChat/releases/tag/v0.1.3"
+    ))
     log.check("decodes the tag without its v", good?.version == "0.1.3", "version=\(good?.version ?? "-")")
-    log.check("decodes the release page", good?.page.absoluteString.hasSuffix("v0.1.3") == true)
+    log.check("the release page is the redirect target",
+          good?.page.absoluteString == "https://github.com/imdlan/PopChat/releases/tag/v0.1.3")
     log.check("bare tags decode too",
-          UpdateChecker.decodeRelease(payload("""
-          {"tag_name":"0.1.4","html_url":"https://example.test/r"}
-          """))?.version == "0.1.4")
-    log.check("prereleases are refused", UpdateChecker.decodeRelease(payload("""
-    {"tag_name":"v0.2.0","html_url":"https://example.test/r","prerelease":true}
-    """)) == nil)
-    log.check("drafts are refused", UpdateChecker.decodeRelease(payload("""
-    {"tag_name":"v0.2.0","html_url":"https://example.test/r","draft":true}
-    """)) == nil)
-    log.check("garbage is refused", UpdateChecker.decodeRelease(payload("not json")) == nil)
-    log.check("a tagless payload is refused", UpdateChecker.decodeRelease(payload("""
-    {"html_url":"https://example.test/r"}
-    """)) == nil)
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat/releases/tag/0.1.4"))?
+              .version == "0.1.4")
+    log.check("a non-tag page is refused",
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat/releases")) == nil)
+    log.check("an unrelated URL is refused",
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat")) == nil)
+    log.check("a tagless path is refused",
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat/releases/tag/")) == nil)
     log.check("the running version parses",
           !UpdateChecker.isNewer(UpdateChecker.currentVersion, than: UpdateChecker.currentVersion))
 

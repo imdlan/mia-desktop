@@ -11,9 +11,15 @@ import Foundation
 /// intact, and it needs no privileged helper.
 @MainActor
 final class UpdateChecker: ObservableObject {
-    /// The releases API for this app's own repository.
+    /// The releases PAGE, not the API: `api.github.com` allows 60 req/h per IP
+    /// unauthenticated — hopeless on shared proxy exits, where other users'
+    /// requests drain the bucket and every check 403s forever (observed
+    /// 2026-10-21). This plain URL 302s to the latest release's tag page on
+    /// github.com, which has no such quota, and the tag parses out of the
+    /// redirect target. Same semantics as the API endpoint: drafts and
+    /// prereleases are excluded.
     nonisolated private static let latestReleaseURL = URL(
-        string: "https://api.github.com/repos/imdlan/PopChat/releases/latest"
+        string: "https://github.com/imdlan/PopChat/releases/latest"
     )!
 
     /// How long a check stays good. A menu-bar app can run for weeks, so this
@@ -22,18 +28,11 @@ final class UpdateChecker: ObservableObject {
 
     private static let lastCheckKey = "lastUpdateCheck"
     /// Manual Check Now inside this window replays the cached answer with NO
-    /// request. GitHub's unauthenticated quota is 60 req/h per IP, shared with
-    /// every other tool on the machine, and measurement (2026-10-21) showed
-    /// even 304 revalidations decrement it — despite GitHub's docs — so not
-    /// sending the request is the only reliable quota saver. The scheduled
-    /// check needs no throttle; its 24 h interval already bounds it.
+    /// request — bounds the app to one request per click-cluster even when a
+    /// user drums on the button waiting for the panel to react.
     private static let manualCheckThrottle: TimeInterval = 10 * 60
-    /// Conditional-request cache from the last 200. With the throttle above
-    /// this is no longer about quota — it keeps a manual check that DOES go
-    /// out from re-downloading a payload it already has when the release
-    /// hasn't changed, and keeps the replayed answer identical to the one the
-    /// network gave.
-    private static let etagKey = "updateCheckETag"
+    /// The last successful answer, so the throttle above has something to
+    /// replay and a re-check costs nothing when nothing changed.
     private static let cachedVersionKey = "updateCheckCachedVersion"
     private static let cachedPageKey = "updateCheckCachedPage"
     /// Opt-out lives in Settings › General, which owns it as `@AppStorage` like
@@ -128,26 +127,19 @@ final class UpdateChecker: ObservableObject {
     nonisolated private static func fetchLatest() async -> FetchResult {
         var request = URLRequest(url: latestReleaseURL)
         request.timeoutInterval = 20
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("PopChat/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-        if let etag = await cachedETag() {
-            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
-        }
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
+            // URLSession follows the 302 to the tag page; `response.url` is the
+            // final URL the version parses out of.
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, let finalURL = response.url else {
                 return .failure("Unexpected response from GitHub.")
             }
             switch http.statusCode {
             case 200:
-                let release = decodeRelease(data)
-                await storeCache(etag: http.value(forHTTPHeaderField: "ETag"), release: release)
+                let release = decodeLatestTagPage(finalURL)
+                await storeCache(release: release)
                 return .success(release)
-            case 304:
-                // Quota-free "unchanged since last time". The cache was written
-                // together with the ETag, so a missing cache here means the
-                // payload was empty (no releases) — same answer.
-                return .success(await cachedRelease())
             case 403, 429:
                 return .failure(rateLimitMessage(http))
             case 404:
@@ -161,18 +153,11 @@ final class UpdateChecker: ObservableObject {
     }
 
     // UserDefaults is MainActor-isolated in this SDK, so every touch of the
-    // conditional-request cache funnels through these helpers instead of
-    // leaking actor hops into fetchLatest.
+    // replay cache funnels through these helpers instead of leaking actor hops
+    // into fetchLatest.
 
-    @MainActor private static func cachedETag() -> String? {
-        UserDefaults.standard.string(forKey: etagKey)
-    }
-
-    @MainActor private static func storeCache(etag: String?, release: Release?) {
+    @MainActor private static func storeCache(release: Release?) {
         let defaults = UserDefaults.standard
-        if let etag {
-            defaults.set(etag, forKey: etagKey)
-        }
         if let release {
             defaults.set(release.version, forKey: cachedVersionKey)
             defaults.set(release.page.absoluteString, forKey: cachedPageKey)
@@ -201,18 +186,16 @@ final class UpdateChecker: ObservableObject {
         return "GitHub is rate-limiting update checks — try again later."
     }
 
-    /// The `/releases/latest` payload. That endpoint already excludes drafts and
-    /// prereleases, so there is nothing to filter here — but the flags are read
-    /// anyway, because a repo can serve a prerelease as "latest" through the API
-    /// if it is the only release, and offering a beta to everyone is not the job.
-    nonisolated static func decodeRelease(_ data: Data) -> Release? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = root["tag_name"] as? String,
-              let page = (root["html_url"] as? String).flatMap(URL.init(string:)) else { return nil }
-        if root["draft"] as? Bool == true || root["prerelease"] as? Bool == true { return nil }
+    /// "https://github.com/<owner>/<repo>/releases/tag/v0.1.7" →
+    /// Release("0.1.7", that page). The `/releases/latest` redirect only ever
+    /// lands on a published, non-prerelease tag — the filtering the API
+    /// payload's draft/prerelease flags did happens server-side here.
+    nonisolated static func decodeLatestTagPage(_ url: URL) -> Release? {
+        guard url.path.contains("/releases/tag/") else { return nil }
+        let tag = url.path.split(separator: "/").last.map(String.init) ?? ""
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         guard !version.isEmpty else { return nil }
-        return Release(version: version, page: page)
+        return Release(version: version, page: url)
     }
 
     /// Numeric component comparison, so 0.1.10 beats 0.1.9 — the string compare
