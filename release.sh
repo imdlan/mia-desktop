@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-IDENTITY="${MIA_SIGN_IDENTITY:-Developer ID Application: Le Chen (322TD85UJS)}"
+IDENTITY="${MIA_SIGN_IDENTITY:-Developer ID Application: Tapfun Information Technology Co., Ltd. (93AQJ9JK46)}"
 PROFILE="${MIA_NOTARY_PROFILE:-developer}"
 
 APP="dist/Mia.app"
