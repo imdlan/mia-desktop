@@ -51,7 +51,7 @@ enum ConversationStore {
     private static var directory: URL {
         let dir = overrideDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("PopChat/conversations", isDirectory: true)
+                .appendingPathComponent("Mia/conversations", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

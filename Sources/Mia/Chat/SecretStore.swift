@@ -5,12 +5,12 @@ import Foundation
 /// re-prompts for the login-keychain password — unacceptable UX (releases carry a
 /// stable Developer ID now, but the dev loop is where the prompts bit, and this
 /// file works for both). Keys are stored unencrypted but
-/// user-only readable (0600) at ~/Library/Application Support/PopChat/secrets.json —
+/// user-only readable (0600) at ~/Library/Application Support/Mia/secrets.json —
 /// the same trust model as the .env files these keys come from.
 enum SecretStore {
     private static var fileURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PopChat", isDirectory: true)
+            .appendingPathComponent("Mia", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("secrets.json")
     }

@@ -395,10 +395,10 @@ struct ComposerView: View {
             recall = nil
             onFocusRequest()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popChatAttachPasteboard)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .miaAttachPasteboard)) { _ in
             model.handlePasteboard()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popChatQuoteSelection)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .miaQuoteSelection)) { note in
             guard let quote = note.object as? String else { return }
             model.appendedQuote = quote
         }

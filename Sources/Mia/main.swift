@@ -1,16 +1,25 @@
 import AppKit
 import SwiftUI
-import PopChatBundleShim
+import MiaBundleShim
 import KeyboardShortcuts
 import SwiftMath
 
 // First, before any dependency can touch its resources: inside the .app, the SPM
-// dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
-PopChatInstallResourceBundleRedirect()
+// dependencies' Bundle.module would otherwise trap (see MiaBundleShim.m).
+MiaInstallResourceBundleRedirect()
+
+// One-time migration from the PopChat era (pre-rename bundle ID/data dir),
+// before anything reads settings, secrets or conversations. Only on a real
+// app launch: the harness invocations below (any "--" flag) run against
+// scratch fixtures, while this call's defaults are the REAL user domain —
+// running it from a harness would migrate the developer's actual data.
+if !CommandLine.arguments.contains(where: { $0.hasPrefix("--") }) {
+    BrandMigration.migrate()
+}
 
 // Headless streaming checks (no UI):
-//   POPCHAT_API_KEY=… .build/debug/PopChat --smoke          plain streaming
-//   POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search   agentic loop w/ DuckDuckGo
+//   MIA_API_KEY=… .build/debug/Mia --smoke          plain streaming
+//   MIA_API_KEY=… .build/debug/Mia --smoke-search   agentic loop w/ DuckDuckGo
 let smokePlain = CommandLine.arguments.contains("--smoke")
 let smokeSearch = CommandLine.arguments.contains("--smoke-search")
 // Verifies the default system prompt actually elicits <pasteable> blocks.
@@ -19,15 +28,15 @@ if smokePlain || smokeSearch || smokePasteable {
     Task {
         let env = ProcessInfo.processInfo.environment
         let config = ProviderConfig(
-            baseURL: env["POPCHAT_BASE_URL"] ?? ProviderConfig.defaultBaseURL,
-            apiKey: env["POPCHAT_API_KEY"] ?? "",
-            model: env["POPCHAT_MODEL"] ?? ProviderConfig.defaultModel
+            baseURL: env["MIA_BASE_URL"] ?? ProviderConfig.defaultBaseURL,
+            apiKey: env["MIA_API_KEY"] ?? "",
+            model: env["MIA_MODEL"] ?? ProviderConfig.defaultModel
         )
         let prompt = smokeSearch
             ? "What is the latest stable release version of the Zed editor? Use web_search to check — do not answer from memory. Reply with just the version number and the source URL."
             : smokePasteable
                 ? "Give me a reusable conventional-commit message template for bug fixes, ready to copy."
-                : "Reply with exactly: PopChat streaming OK"
+                : "Reply with exactly: Mia streaming OK"
         print("smoke: \(config.baseURL) model=\(config.model) search=\(smokeSearch) pasteable=\(smokePasteable)")
         var chunks = 0
         var reasoningChars = 0
@@ -265,7 +274,7 @@ if CommandLine.arguments.contains("--smoke-typewriter") {
 }
 
 // User-installed Codex app-server check (no UI, no model turn/quota use):
-//   .build/debug/PopChat --check-codex-app-server
+//   .build/debug/Mia --check-codex-app-server
 if CommandLine.arguments.contains("--check-codex-app-server") {
     Task {
         do {
@@ -290,8 +299,8 @@ if CommandLine.arguments.contains("--check-codex-app-server") {
 // needs the user's real Codex, signed in. `web_search` is a config ENUM and
 // Codex REFUSES TO START on an unknown variant, so a wrong value here breaks
 // every turn rather than just search; probe A therefore fails loudly if the
-// variant PopChat sends stops being accepted. Probe B is the gate itself.
-//   .build/debug/PopChat --smoke-codex-app-server-search
+// variant Mia sends stops being accepted. Probe B is the gate itself.
+//   .build/debug/Mia --smoke-codex-app-server-search
 if CommandLine.arguments.contains("--smoke-codex-app-server-search") {
     Task {
         func turn(webSearch: Bool, model: String) async -> (text: String, searched: Bool, emptyQuery: Bool, error: String?) {
@@ -359,7 +368,7 @@ if CommandLine.arguments.contains("--smoke-codex-app-server-search") {
 // the replayed completion must not duplicate its item; the retryable error must
 // drop the aborted in-flight partial (never glue the re-stream onto it) and
 // surface a transient retry status instead of silence:
-//   .build/debug/PopChat --smoke-codex-app-server-streaming /path/to/fake-codex
+//   .build/debug/Mia --smoke-codex-app-server-streaming /path/to/fake-codex
 if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-streaming"),
    CommandLine.arguments.count > flag + 1 {
     let executable = URL(fileURLWithPath: CommandLine.arguments[flag + 1])
@@ -431,7 +440,7 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-str
 
 // A fake executable for this harness acknowledges setup, then stays silent after
 // turn/start. The adapter must terminate it and surface the inactivity error:
-//   .build/debug/PopChat --smoke-codex-app-server-timeout /path/to/fake-codex
+//   .build/debug/Mia --smoke-codex-app-server-timeout /path/to/fake-codex
 if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-timeout"),
    CommandLine.arguments.count > flag + 1 {
     let executable = URL(fileURLWithPath: CommandLine.arguments[flag + 1])
@@ -460,12 +469,12 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-tim
 }
 
 // Back-pressure regression. A fake executable that ACKNOWLEDGES setup and then
-// stops draining its stdin must not be able to wedge PopChat: the adapter blocks
+// stops draining its stdin must not be able to wedge Mia: the adapter blocks
 // inside a large `thread/inject_items` write, and stop() — the watchdog's and the
 // Stop button's only exit — must still be able to terminate the child. Holding a
 // lock across that write made stop() block on the lock the blocked write owned,
 // and this harness never returned:
-//   .build/debug/PopChat --smoke-codex-app-server-backpressure /path/to/fake-codex
+//   .build/debug/Mia --smoke-codex-app-server-backpressure /path/to/fake-codex
 if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-backpressure"),
    CommandLine.arguments.count > flag + 1 {
     let executable = URL(fileURLWithPath: CommandLine.arguments[flag + 1])
@@ -509,8 +518,8 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-bac
 }
 
 // ChatGPT-subscription auth + streaming checks (no UI):
-//   .build/debug/PopChat --chatgpt-login    interactive: opens the browser OAuth flow
-//   .build/debug/PopChat --smoke-chatgpt    requires a prior login; one streaming turn
+//   .build/debug/Mia --chatgpt-login    interactive: opens the browser OAuth flow
+//   .build/debug/Mia --smoke-chatgpt    requires a prior login; one streaming turn
 if CommandLine.arguments.contains("--chatgpt-login") {
     Task { @MainActor in
         do {
@@ -530,13 +539,13 @@ if CommandLine.arguments.contains("--smoke-chatgpt") {
             print("SKIP: not signed in — run --chatgpt-login first")
             exit(1)
         }
-        let model = ProcessInfo.processInfo.environment["POPCHAT_MODEL"] ?? ChatGPTAuth.defaultModel
+        let model = ProcessInfo.processInfo.environment["MIA_MODEL"] ?? ChatGPTAuth.defaultModel
         let config = ProviderConfig(baseURL: "", apiKey: "", model: model, kind: .chatGPT)
         let useSearch = CommandLine.arguments.contains("--with-search")
         print("smoke-chatgpt: model=\(model) account=\(ChatGPTAuth.accountEmail ?? "?") search=\(useSearch)")
         let prompt = useSearch
             ? "What is the latest stable release version of the Zed editor? Use web_search to check — do not answer from memory. Reply with just the version number and the source URL."
-            : "Reply with exactly: PopChat ChatGPT OK"
+            : "Reply with exactly: Mia ChatGPT OK"
         var chunks = 0
         let history = [OpenAIChatClient.WireMessage(role: "user", content: .text(prompt))]
         for await event in CodexResponsesClient.run(
@@ -616,7 +625,7 @@ if CommandLine.arguments.contains("--smoke-persist") {
 if CommandLine.arguments.contains("--smoke-rerun") {
     MainActor.assumeIsolated {
         let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("popchat-rerun-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            .appendingPathComponent("mia-rerun-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
         ConversationStore.overrideDirectory = scratch
         var log = CheckLog()
 
@@ -688,7 +697,7 @@ if CommandLine.arguments.contains("--smoke-rerun") {
 // Cross-conversation search behind the history popover's field (no UI).
 if CommandLine.arguments.contains("--smoke-chat-search") {
     let scratch = FileManager.default.temporaryDirectory
-        .appendingPathComponent("popchat-chatsearch-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        .appendingPathComponent("mia-chatsearch-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     ConversationStore.overrideDirectory = scratch
     var log = CheckLog()
 
@@ -760,7 +769,7 @@ if CommandLine.arguments.contains("--smoke-chat-search") {
 // transcript — an export is an archive, so its shape must not drift silently.
 if CommandLine.arguments.contains("--smoke-export") {
     let scratch = FileManager.default.temporaryDirectory
-        .appendingPathComponent("popchat-export-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        .appendingPathComponent("mia-export-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     ConversationStore.overrideDirectory = scratch
     var log = CheckLog()
 
@@ -816,7 +825,7 @@ if CommandLine.arguments.contains("--smoke-export") {
           "stamp=\(stamp(exportedAt))")
     let golden = """
             # Fork export child
-            *Exported from PopChat · \(stamp(exportedAt))*
+            *Exported from Mia · \(stamp(exportedAt))*
 
             **You:**
 
@@ -886,7 +895,7 @@ if CommandLine.arguments.contains("--smoke-export") {
 }
 
 // Selection-quote formatting for the Services prefill (no network, no UI):
-//   .build/debug/PopChat --smoke-selection
+//   .build/debug/Mia --smoke-selection
 // The Services plumbing around it can't run headless; the FORMAT it injects
 // can and must not drift — it is what the user's model reads as context.
 if CommandLine.arguments.contains("--smoke-selection") {
@@ -945,7 +954,7 @@ if CommandLine.arguments.contains("--smoke-selection") {
     }
 
     let ownFrames = [CGRect(x: 0, y: 0, width: 500, height: 400), CGRect(x: 800, y: 0, width: 200, height: 200)]
-    log.check("presses inside PopChat's own windows are suppressed",
+    log.check("presses inside Mia's own windows are suppressed",
           SelectionGesture.isInside(point: CGPoint(x: 250, y: 200), frames: ownFrames)
               && SelectionGesture.isInside(point: CGPoint(x: 900, y: 100), frames: ownFrames))
     log.check("presses outside them are not",
@@ -971,7 +980,7 @@ if CommandLine.arguments.contains("--smoke-selection") {
 }
 
 // Auto-naming (P3) request construction, cleanup and guard laws (no network,
-// no UI):   .build/debug/PopChat --smoke-titling
+// no UI):   .build/debug/Mia --smoke-titling
 // The network hop itself has no injectable fake (fetchTitle uses the shared
 // URLSession), so the contract is pinned here at every pure boundary it has.
 if CommandLine.arguments.contains("--smoke-titling") {
@@ -1077,7 +1086,7 @@ if CommandLine.arguments.contains("--smoke-titling") {
 
 // Persona presets (P4) — resolution priority, Custom-path fidelity, seeding
 // laws, codec round-trip (no network, no UI, reads no mutable state):
-//   .build/debug/PopChat --smoke-persona
+//   .build/debug/Mia --smoke-persona
 if CommandLine.arguments.contains("--smoke-persona") {
     var log = CheckLog()
 
@@ -1153,20 +1162,20 @@ if CommandLine.arguments.contains("--smoke-update") {
     func payload(_ json: String) -> Data { Data(json.utf8) }
     func url(_ s: String) -> URL { URL(string: s)! }
     let good = UpdateChecker.decodeLatestTagPage(url(
-        "https://github.com/imdlan/PopChat/releases/tag/v0.1.3"
+        "https://github.com/imdlan/mia-desktop/releases/tag/v0.1.3"
     ))
     log.check("decodes the tag without its v", good?.version == "0.1.3", "version=\(good?.version ?? "-")")
     log.check("the release page is the redirect target",
-          good?.page.absoluteString == "https://github.com/imdlan/PopChat/releases/tag/v0.1.3")
+          good?.page.absoluteString == "https://github.com/imdlan/mia-desktop/releases/tag/v0.1.3")
     log.check("bare tags decode too",
-          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat/releases/tag/0.1.4"))?
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/mia-desktop/releases/tag/0.1.4"))?
               .version == "0.1.4")
     log.check("a non-tag page is refused",
-          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat/releases")) == nil)
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/mia-desktop/releases")) == nil)
     log.check("an unrelated URL is refused",
-          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat")) == nil)
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/mia-desktop")) == nil)
     log.check("a tagless path is refused",
-          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/PopChat/releases/tag/")) == nil)
+          UpdateChecker.decodeLatestTagPage(url("https://github.com/imdlan/mia-desktop/releases/tag/")) == nil)
     log.check("the running version parses",
           !UpdateChecker.isNewer(UpdateChecker.currentVersion, than: UpdateChecker.currentVersion))
 
@@ -1177,7 +1186,7 @@ if CommandLine.arguments.contains("--smoke-update") {
 // a .localhost name): loopback, this-host, RFC1918, link-local (incl. the cloud
 // metadata endpoint), CGNAT, ULA and multicast targets are refused, IPv4-mapped
 // IPv6 is classified through its embedded v4 address, and public addresses pass.
-//   .build/debug/PopChat --smoke-web-guard
+//   .build/debug/Mia --smoke-web-guard
 if CommandLine.arguments.contains("--smoke-web-guard") {
     var log = CheckLog()
     func probe(_ string: String) -> Bool { WebToolExecutor.isInternalTarget(URL(string: string)!) }
@@ -1200,7 +1209,7 @@ if CommandLine.arguments.contains("--smoke-web-guard") {
 }
 
 // Resource bundles: the dependencies' Bundle.module must resolve INSIDE the
-// assembled .app (no network). Only meaningful when run from dist/PopChat.app —
+// assembled .app (no network). Only meaningful when run from dist/Mia.app —
 // build.sh runs it there after assembly. "Didn't trap" alone proves nothing on
 // this machine, where the accessor's compile-time fallback directory usually
 // exists; the redirect count is what shows the lookups went through
@@ -1209,12 +1218,12 @@ if CommandLine.arguments.contains("--smoke-bundles") {
     var log = CheckLog()
     let root = Bundle.main.bundleURL
     log.check("runs from an assembled .app", root.pathExtension == "app",
-              "Bundle.main is \(root.path) — run dist/PopChat.app/Contents/MacOS/PopChat --smoke-bundles")
+              "Bundle.main is \(root.path) — run dist/Mia.app/Contents/MacOS/Mia --smoke-bundles")
     _ = NSApplication.shared
     // The two lookups that crashed 0.1.2: the hotkey recorder (localized strings)
     // and a LaTeX font.
-    let recorder = KeyboardShortcuts.RecorderCocoa(for: .togglePopChat)
-    log.check("the hotkey recorder constructs", recorder.shortcutName == .togglePopChat)
+    let recorder = KeyboardShortcuts.RecorderCocoa(for: .toggleMia)
+    log.check("the hotkey recorder constructs", recorder.shortcutName == .toggleMia)
     log.check("a math font loads", MTFontManager.manager.latinModernFont(withSize: 12) != nil)
     // Two toolchains, one law. CLT-27-era SwiftPM accessors only try the .app
     // ROOT and the compile-time fallback, so the swizzle answers the root
@@ -1223,7 +1232,7 @@ if CommandLine.arguments.contains("--smoke-bundles") {
     // swizzle, so redirected stays 0. Either mechanism is fine as long as the
     // bundles that LOAD are the in-app copies — that is the property issue #1
     // (hotkey crash on a stranger's Mac) actually depends on.
-    let redirected = PopChatResourceBundleRedirectCount()
+    let redirected = MiaResourceBundleRedirectCount()
     // And the bundles the dependencies now hold ARE the in-app copies — not the
     // compile-time fallback, which on this machine usually still exists.
     let loaded = Set(Bundle.allBundles.map { $0.bundleURL.standardizedFileURL.path })
@@ -1240,6 +1249,95 @@ if CommandLine.arguments.contains("--smoke-bundles") {
         log.check("\(name) resolved to the in-app copy", loaded.contains(expected),
                   "loaded=\(loaded.filter { $0.hasSuffix(".bundle") }.sorted())")
     }
+    log.finish()
+}
+
+// Brand migration (no network, no UI): the rename moved the bundle ID (so
+// UserDefaults.standard lost every setting), the Application Support directory
+// (so conversations/ and secrets.json were orphaned) and the hotkey name (so
+// KeyboardShortcuts lost the user's shortcut). Every fixture here is
+// disposable — a throwaway defaults domain and a temp directory — because this
+// machine carries the REAL com.chenle.PopChat domain and PopChat/ data, and the
+// harness must never go near them. All of migrate's parameters are therefore
+// explicit; a default-argument call in here would run against real user data.
+//   .build/debug/Mia --smoke-migration
+if CommandLine.arguments.contains("--smoke-migration") {
+    let pid = ProcessInfo.processInfo.processIdentifier
+    var log = CheckLog()
+    let files = FileManager.default
+
+    // Fixtures: an Application Support root holding the old app's data, a
+    // legacy defaults domain carrying two representative keys, and an empty
+    // target domain standing in for the new identity.
+    let root = files.temporaryDirectory
+        .appendingPathComponent("mia-migration-smoke-\(pid)", isDirectory: true)
+        .appendingPathComponent("Application Support", isDirectory: true)
+    let legacyID = "test.mia.legacy.\(pid)"
+    let targetID = "test.mia.target.\(pid)"
+    let legacy = UserDefaults(suiteName: legacyID)!
+    let target = UserDefaults(suiteName: targetID)!
+    target.removePersistentDomain(forName: targetID)
+    let hotkeyJSON = #"{"carbonModifiers": 2048, "carbonKeyCode": 49}"#
+    do {
+        try files.createDirectory(
+            at: root.appendingPathComponent("PopChat/conversations", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try #"{"sk-legacy": "fixture"}"#.write(
+            to: root.appendingPathComponent("PopChat/secrets.json"), atomically: true, encoding: .utf8
+        )
+        try #"{"id": "c1"}"#.write(
+            to: root.appendingPathComponent("PopChat/conversations/c1.json"), atomically: true, encoding: .utf8
+        )
+    } catch {
+        print("FAIL: could not build fixtures: \(error.localizedDescription)")
+        exit(1)
+    }
+    legacy.set(["DeepSeek|https://api.deepseek.com"], forKey: "providerList")
+    legacy.set(hotkeyJSON, forKey: "KeyboardShortcuts_togglePopChat")
+    legacy.synchronize()
+
+    // The full flow, exactly as a first post-rename launch runs it — with every
+    // real identifier swapped for the fixtures above.
+    let actions = BrandMigration.migrate(appSupportRoot: root, legacyAppID: legacyID, defaults: target)
+    print("actions: \(actions)")
+    log.check("moves PopChat/ to Mia/ wholesale",
+          files.fileExists(atPath: root.appendingPathComponent("Mia/conversations/c1.json").path)
+              && files.fileExists(atPath: root.appendingPathComponent("Mia/secrets.json").path))
+    log.check("the old directory is renamed away, not copied",
+          !files.fileExists(atPath: root.appendingPathComponent("PopChat").path))
+    log.check("settings survive the bundle-ID change",
+          target.object(forKey: "providerList") as? [String] == ["DeepSeek|https://api.deepseek.com"],
+          "got \(String(describing: target.object(forKey: "providerList")))")
+    log.check("the hotkey follows its renamed key",
+          target.string(forKey: "KeyboardShortcuts_toggleMia") == hotkeyJSON
+              && target.object(forKey: "KeyboardShortcuts_togglePopChat") == nil)
+    log.check("the migrated flag is set", target.bool(forKey: BrandMigration.migratedFlagKey))
+
+    // Idempotence: a second launch must be a complete no-op.
+    let again = BrandMigration.migrate(appSupportRoot: root, legacyAppID: legacyID, defaults: target)
+    log.check("a second run does nothing", again.isEmpty, "actions=\(again)")
+
+    // Both directories present (the user ran both builds): force re-runs the
+    // flow, but the move must still refuse — merging or deleting either side
+    // would destroy data the user can see.
+    try? files.createDirectory(
+        at: root.appendingPathComponent("PopChat", isDirectory: true), withIntermediateDirectories: true
+    )
+    let forced = BrandMigration.migrate(
+        appSupportRoot: root, legacyAppID: legacyID, defaults: target, force: true
+    )
+    print("forced actions: \(forced)")
+    log.check("both-present leaves both directories alone",
+          files.fileExists(atPath: root.appendingPathComponent("PopChat").path)
+              && files.fileExists(atPath: root.appendingPathComponent("Mia").path))
+    log.check("both-present says so in the log",
+          forced.contains { $0.contains("nothing moved") }, "actions=\(forced)")
+
+    // The throwaway domains and the temp tree disappear entirely.
+    target.removePersistentDomain(forName: targetID)
+    legacy.removePersistentDomain(forName: legacyID)
+    try? files.removeItem(at: root.deletingLastPathComponent())
     log.finish()
 }
 
@@ -1330,7 +1428,7 @@ if CommandLine.arguments.contains("--smoke-reasoning") {
     log.finish()
 }
 
-// Attachment-loader check (no network): .build/debug/PopChat --smoke-file <path>
+// Attachment-loader check (no network): .build/debug/Mia --smoke-file <path>
 if let flagIndex = CommandLine.arguments.firstIndex(of: "--smoke-file"),
    CommandLine.arguments.count > flagIndex + 1 {
     let path = CommandLine.arguments[flagIndex + 1]
@@ -1418,7 +1516,7 @@ func sendArrow(up: Bool, to panel: NSWindow) -> Bool {
 /// scratch store, so UI harnesses are deterministic and never touch real history.
 func installBenchmarkConversation(minLength: Int) -> URL {
     let scratch = FileManager.default.temporaryDirectory
-        .appendingPathComponent("popchat-bench-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        .appendingPathComponent("mia-bench-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     ConversationStore.overrideDirectory = scratch
     let block = """
     ## Section heading
@@ -1458,7 +1556,7 @@ func installBenchmarkConversation(minLength: Int) -> URL {
 /// three widely separated messages so stepping matches must move the scroller.
 func installFindConversation() -> URL {
     let scratch = FileManager.default.temporaryDirectory
-        .appendingPathComponent("popchat-find-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        .appendingPathComponent("mia-find-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     ConversationStore.overrideDirectory = scratch
     let filler = String(repeating: "Filler prose that exists purely to make the transcript tall. ", count: 30)
     var messages: [ChatMessage] = []
@@ -1793,7 +1891,7 @@ if CommandLine.arguments.contains("--smoke-typing") {
 if CommandLine.arguments.contains("--smoke-recall") {
     MainActor.assumeIsolated {
         let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("popchat-recall-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            .appendingPathComponent("mia-recall-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
         ConversationStore.overrideDirectory = scratch
         let savedHistory = PromptHistory.entries
         UserDefaults.standard.set(["short one", "a considerably longer older prompt"], forKey: "promptHistory")
@@ -1891,7 +1989,7 @@ if CommandLine.arguments.contains("--smoke-recall") {
 if CommandLine.arguments.contains("--smoke-input") {
     MainActor.assumeIsolated {
         let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("popchat-input-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            .appendingPathComponent("mia-input-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
         ConversationStore.overrideDirectory = scratch
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -1901,7 +1999,7 @@ if CommandLine.arguments.contains("--smoke-input") {
 
         // Unbundled, this binary gets its own UserDefaults domain, so the provider
         // list is freshly generated and the app's stored key (keyed by the app's
-        // provider UUID) doesn't match. --live borrows POPCHAT_API_KEY like the
+        // provider UUID) doesn't match. --live borrows MIA_API_KEY like the
         // other live harnesses; the entry is removed again on the way out.
         // SecretStore writes the REAL secrets file (it has no scratch override),
         // so put back exactly what was there — deleting unconditionally would
@@ -1909,7 +2007,7 @@ if CommandLine.arguments.contains("--smoke-input") {
         var borrowedAccount: String?
         var displacedSecret: String?
         if CommandLine.arguments.contains("--live"),
-           let key = ProcessInfo.processInfo.environment["POPCHAT_API_KEY"], !key.isEmpty,
+           let key = ProcessInfo.processInfo.environment["MIA_API_KEY"], !key.isEmpty,
            let provider = providerStore.selectedProvider {
             borrowedAccount = provider.id.uuidString
             displacedSecret = SecretStore.get(account: provider.id.uuidString)
@@ -2382,7 +2480,7 @@ if CommandLine.arguments.contains("--smoke-find") {
     }
 }
 
-// Accent-color laws (no GUI, no network): .build/debug/PopChat --smoke-accent
+// Accent-color laws (no GUI, no network): .build/debug/Mia --smoke-accent
 //
 // The custom accent turns any hex into HSB and back on every popover open, so
 // that round trip has to be lossless; and the reason the picker is hand-rolled
@@ -2480,7 +2578,7 @@ if CommandLine.arguments.contains("--smoke-accent") {
 }
 
 // Attachment-capability laws (no GUI, no network, no defaults touched):
-//   .build/debug/PopChat --smoke-attach-caps
+//   .build/debug/Mia --smoke-attach-caps
 //
 // The 2026-07-23 capability design in miniature: resolution priority (manual
 // exception > learned > authoritative metadata > kind default), images always
@@ -2629,7 +2727,7 @@ if CommandLine.arguments.contains("--smoke-attach-caps") {
     exit(0)
 }
 
-// Drop-target laws (no GUI, no network): .build/debug/PopChat --smoke-drop
+// Drop-target laws (no GUI, no network): .build/debug/Mia --smoke-drop
 //
 // "Drag a fresh screenshot in" is a FILE-PROMISE drag: the PNG doesn't exist
 // on disk until the destination receives the promise, so the old URL-only
@@ -2662,7 +2760,7 @@ if CommandLine.arguments.contains("--smoke-drop") {
             }
         }
         func scratchPasteboard(_ suffix: String) -> NSPasteboard {
-            let pasteboard = NSPasteboard(name: .init("popchat-smoke-drop-\(suffix)-\(ProcessInfo.processInfo.processIdentifier)"))
+            let pasteboard = NSPasteboard(name: .init("mia-smoke-drop-\(suffix)-\(ProcessInfo.processInfo.processIdentifier)"))
             pasteboard.clearContents()
             return pasteboard
         }
@@ -2700,7 +2798,7 @@ if CommandLine.arguments.contains("--smoke-drop") {
 
         // 3. A plain file-URL drag still attaches end-to-end.
         let textURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("popchat-smoke-drop-\(ProcessInfo.processInfo.processIdentifier).txt")
+            .appendingPathComponent("mia-smoke-drop-\(ProcessInfo.processInfo.processIdentifier).txt")
         do { try "drop smoke".write(to: textURL, atomically: true, encoding: .utf8) } catch {
             fail("couldn't write scratch file: \(error.localizedDescription)")
         }
@@ -2824,7 +2922,7 @@ if let noticeIndex = CommandLine.arguments.firstIndex(of: "--smoke-notice") {
                   let view = findDropView(panel.contentView) else {
                 print("FAIL: no panel or drop view"); cleanUpFiles(); finish(1)
             }
-            let pasteboard = NSPasteboard(name: NSPasteboard.Name("popchat-smoke-notice"))
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("mia-smoke-notice"))
             pasteboard.clearContents()
             pasteboard.writeObjects([file as NSURL])
             guard view.handleDrop(from: pasteboard) else {
@@ -3015,7 +3113,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             // comes out as a white fog (the light one only looks fine by luck).
             defaults.set(false, forKey: "liquidGlass")
             let scratch = FileManager.default.temporaryDirectory
-                .appendingPathComponent("popchat-shot-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+                .appendingPathComponent("mia-shot-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
             ConversationStore.overrideDirectory = scratch
             // Seeded the supported way — saved to the scratch store, then
             // resumed by ChatStore.init like every other transcript harness.
@@ -3044,7 +3142,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             // scratch-store seeding as the transcript case, solid panel.
             defaults.set(false, forKey: "liquidGlass")
             let scratch = FileManager.default.temporaryDirectory
-                .appendingPathComponent("popchat-shot-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+                .appendingPathComponent("mia-shot-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
             ConversationStore.overrideDirectory = scratch
             func turn(_ q: String, _ a: String) -> [ChatMessage] {
                 [ChatMessage(role: .user, text: q), ChatMessage(role: .assistant, text: a)]
@@ -3375,7 +3473,7 @@ if CommandLine.arguments.contains("--smoke-providers") {
 // An LSUIElement app that opens nothing on launch reads as broken, and
 // double-clicking it again — the natural retry — used to be a literal no-op.
 // This drives the REAL launch path with the install marker cleared:
-//   .build/debug/PopChat --smoke-firstrun
+//   .build/debug/Mia --smoke-firstrun
 // (a GUI harness: it takes key window, so don't run it beside the others.)
 if CommandLine.arguments.contains("--smoke-firstrun") {
     let launchDelegate = MainActor.assumeIsolated { AppDelegate() }
@@ -3390,7 +3488,7 @@ if CommandLine.arguments.contains("--smoke-firstrun") {
             if let saved { defaults.set(saved, forKey: AppDelegate.hasLaunchedKey) }
             else { defaults.removeObject(forKey: AppDelegate.hasLaunchedKey) }
         }
-        // Pretend this machine has never run PopChat.
+        // Pretend this machine has never run Mia.
         defaults.removeObject(forKey: AppDelegate.hasLaunchedKey)
 
         var failures: [String] = []
@@ -3421,7 +3519,7 @@ if CommandLine.arguments.contains("--smoke-firstrun") {
             check(!launchDelegate.isPanelOnScreen, "a later launch stays out of the way")
 
             // ...and a login-item launch stays silent even on a fresh install:
-            // the user asked for PopChat to be READY at boot, not to greet them.
+            // the user asked for Mia to be READY at boot, not to greet them.
             defaults.removeObject(forKey: AppDelegate.hasLaunchedKey)
             launchDelegate.presentLaunchUI(loginItem: true)
         }

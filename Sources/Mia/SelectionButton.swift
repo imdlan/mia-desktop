@@ -31,7 +31,7 @@ enum SelectionGesture {
         )
     }
 
-    /// Events landing inside any of PopChat's own windows (chat panel,
+    /// Events landing inside any of Mia's own windows (chat panel,
     /// Settings, the button itself) never count as foreign selections. The
     /// controller supplies the live window frames; the containment law is pure.
     static func isInside(point: CGPoint, frames: [CGRect]) -> Bool {
@@ -122,7 +122,7 @@ final class SelectionButtonController {
             MainActor.assumeIsolated { self?.handleGlobal(event) }
         }
         // Local monitor: our own windows' presses suppress gesture pairing
-        // (a drag inside PopChat is never a foreign selection) and an
+        // (a drag inside Mia is never a foreign selection) and an
         // in-app click retires a visible button — except on the button
         // itself, whose own mouseUp is the click.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
@@ -174,7 +174,7 @@ final class SelectionButtonController {
     }
 
     private func ownWindowFrames() -> [CGRect] {
-        // Every visible PopChat window — chat panel, Settings, popovers and
+        // Every visible Mia window — chat panel, Settings, popovers and
         // the button itself — is "us"; presses there are never selections.
         NSApp.windows.filter { $0.isVisible }.map(\.frame)
     }
@@ -375,7 +375,7 @@ private final class SelectionButtonView: NSView {
     private static let glyph: NSImage? = {
         guard let symbol = NSImage(
             systemSymbolName: "bubble.left.and.bubble.right.fill",
-            accessibilityDescription: "Ask PopChat"
+            accessibilityDescription: "Ask Mia"
         ) else { return nil }
         // Template glyphs draw black; tint once, at load, to the label color
         // so draw(_:) stays a cheap blit.

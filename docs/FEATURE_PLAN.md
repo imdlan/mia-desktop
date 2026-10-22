@@ -1,4 +1,4 @@
-# PopChat 功能增强开发需求文档 v1
+# Mia 功能增强开发需求文档 v1
 
 > 依据:2026-10-21 代码盘点。优先级:**P1 导出 > P2 划词即问 > P3 自动命名 > P4 persona 预设**。
 > 非目标(README:104 上游红线):模型控制代码执行、任意工具插件、语音、多窗口。
@@ -26,7 +26,7 @@
 **背景**:`PanelDrop` 仅支持拖放;无系统级选区捕获。
 
 ### 需求
-- R2.1 `NSServices` 注册服务(Info.plist `NSServices` 声明 + `NSApp.servicesProvider`),任意 app 选中文字 → 服务菜单 "Ask PopChat"。
+- R2.1 `NSServices` 注册服务(Info.plist `NSServices` 声明 + `NSApp.servicesProvider`),任意 app 选中文字 → 服务菜单 "Ask Mia"。
 - R2.2 handler:显示面板 → composer 预填引用块(`> 选中文本` + 空行),光标落末尾并 focus;不自动发送。
 - R2.3 FirstRunHint 增加一次性提示:服务需在 系统设置 → 键盘 → 键盘快捷键 → 服务 中启用/设快捷键。
 
@@ -64,9 +64,9 @@
 ### 需求
 - R5.1 选区检测:全局鼠标监听(免权限)判定"选区手势"(拖拽 ≥12pt 或 双击/三击),满足后在鼠标抬起点(≈选区尾端)**下方**显示小型非激活浮动按钮面板;自动消失(6s 无交互或任意下次点击/滚轮/Esc)。
 - R5.2 取词:保存剪贴板(changeCount + items)→ 模拟 ⌘C → 轮询 changeCount(≤150ms)读取文本 → 还原剪贴板;需要辅助功能权限,未授权时 Settings 显示状态与授权入口(kAXTrustedCheckOptionPrompt 一次性引导)。
-- R5.3 点击行为:隐藏按钮 → `PanelController.show()`(复用 P2 非激活路径)→ 走 P2 的 `.popChatQuoteSelection` 通道预填引用块并聚焦;Settings 增加 "Send immediately"(默认关),开启则直接以引用块作为消息发送。
+- R5.3 点击行为:隐藏按钮 → `PanelController.show()`(复用 P2 非激活路径)→ 走 P2 的 `.miaQuoteSelection` 通道预填引用块并聚焦;Settings 增加 "Send immediately"(默认关),开启则直接以引用块作为消息发送。
 - R5.4 Settings:Chat 页(或 General,由实现者按布局惯例定)增加 "Show selection button"(默认开,随权限状态展示)。
-- R5.5 抑制:事件点位于 PopChat 自身窗口(面板/按钮)内不触发;按钮已显示期间不重复触发;P2 Services 通道保留不动。
+- R5.5 抑制:事件点位于 Mia 自身窗口(面板/按钮)内不触发;按钮已显示期间不重复触发;P2 Services 通道保留不动。
 - R5.6 已知边界(记录不修):纯键盘选区(Shift+方向键)不触发;取词效果依赖目标 app 对 ⌘C 的响应(文本可选即可,业界同款方案)。
 
 ### 验证(Owner: Orchestrator)

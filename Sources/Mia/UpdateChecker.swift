@@ -1,6 +1,6 @@
 import Foundation
 
-/// "Is there a newer PopChat?" — nothing more.
+/// "Is there a newer Mia?" — nothing more.
 ///
 /// The app ships as a notarized DMG from GitHub Releases and has no installer,
 /// so without this a user who downloaded 0.1.0 stays on 0.1.0 forever: there is
@@ -19,7 +19,7 @@ final class UpdateChecker: ObservableObject {
     /// redirect target. Same semantics as the API endpoint: drafts and
     /// prereleases are excluded.
     nonisolated private static let latestReleaseURL = URL(
-        string: "https://github.com/imdlan/PopChat/releases/latest"
+        string: "https://github.com/imdlan/mia-desktop/releases/latest"
     )!
 
     /// How long a check stays good. A menu-bar app can run for weeks, so this
@@ -127,7 +127,7 @@ final class UpdateChecker: ObservableObject {
     nonisolated private static func fetchLatest() async -> FetchResult {
         var request = URLRequest(url: latestReleaseURL)
         request.timeoutInterval = 20
-        request.setValue("PopChat/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mia/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         do {
             // URLSession follows the 302 to the tag page; `response.url` is the
             // final URL the version parses out of.

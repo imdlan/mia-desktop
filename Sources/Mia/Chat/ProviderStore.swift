@@ -1,8 +1,8 @@
 import Foundation
 
-/// How PopChat talks to a provider. Almost everything is OpenAI-compatible chat
+/// How Mia talks to a provider. Almost everything is OpenAI-compatible chat
 /// completions with an API key. The two subscription paths are intentionally
-/// distinct: `.chatGPT` is PopChat's unofficial direct OAuth/backend adapter;
+/// distinct: `.chatGPT` is Mia's unofficial direct OAuth/backend adapter;
 /// `.codexAppServer` delegates to the user's locally installed Codex.
 enum ProviderKind: String, Codable {
     case openAICompatible
@@ -62,7 +62,7 @@ struct Provider: Identifiable, Codable, Equatable {
 /// `directoryURL` is the maintained catalog). Every entry's `/models` route was
 /// live-verified OpenAI-shaped on 2026-08-04. GitHub Models is deliberately
 /// absent: its model listing is not OpenAI-shaped (`…/inference/models`
-/// answers 410; the catalog lives elsewhere), so PopChat's client can't
+/// answers 410; the catalog lives elsewhere), so Mia's client can't
 /// complete setup against it. OpenRouter's free models need no entry — the
 /// standing OpenRouter preset already covers them.
 struct FreeProviderTemplate: Identifiable {
@@ -361,7 +361,7 @@ final class ProviderStore: ObservableObject {
         // changes or the switcher's configuredProviders would go stale after
         // sign-out. Observer lives for the app's lifetime alongside the store.
         NotificationCenter.default.addObserver(
-            forName: .popChatChatGPTAuthChanged, object: nil, queue: .main
+            forName: .miaChatGPTAuthChanged, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.objectWillChange.send() }
         }
@@ -657,7 +657,7 @@ final class ProviderStore: ObservableObject {
     }
 
     /// Ask the installed Codex process for both account state and its live model
-    /// catalog. PopChat never installs or signs in Codex on the user's behalf.
+    /// catalog. Mia never installs or signs in Codex on the user's behalf.
     func refreshCodexAppServer(
         includeModels: Bool = true,
         inspection: @escaping @Sendable (Bool) async throws -> CodexAppServerClient.Inspection = {

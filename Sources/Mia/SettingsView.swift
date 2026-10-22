@@ -176,7 +176,7 @@ struct SettingsView: View {
     private var generalTab: some View {
         Form {
             Section {
-                Toggle("Launch PopChat at login", isOn: $launchAtLogin)
+                Toggle("Launch Mia at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         do {
                             if enabled {
@@ -204,10 +204,10 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("Updates")
             } footer: {
-                sectionFooter("PopChat checks GitHub Releases once a day and tells you when a newer version exists. It never downloads or installs anything — updating is opening the release page and dragging the new build to Applications, same as the first time.")
+                sectionFooter("Mia checks GitHub Releases once a day and tells you when a newer version exists. It never downloads or installs anything — updating is opening the release page and dragging the new build to Applications, same as the first time.")
             }
             Section {
-                KeyboardShortcuts.Recorder("Toggle PopChat:", name: .togglePopChat)
+                KeyboardShortcuts.Recorder("Toggle Mia:", name: .toggleMia)
             } header: {
                 sectionHeader("Show & Hide")
             } footer: {
@@ -226,7 +226,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("Appearance")
             } footer: {
-                sectionFooter("Panel tint defaults to the system glass appearance; the slider overrides it for PopChat only. Reduce Transparency always wins.")
+                sectionFooter("Panel tint defaults to the system glass appearance; the slider overrides it for Mia only. Reduce Transparency always wins.")
             }
             Section {
                 Picker("Your message style", selection: $bubbleStyleRaw) {
@@ -253,7 +253,7 @@ struct SettingsView: View {
     private var updateRow: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("PopChat \(UpdateChecker.currentVersion)")
+                Text("Mia \(UpdateChecker.currentVersion)")
                 switch updates.state {
                 case .idle:
                     EmptyView()
@@ -446,7 +446,7 @@ struct SettingsView: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: editingID)
                 sectionFooter("The live provider and model are picked from the pill in the chat panel — this list only manages what shows up there. Keys are stored locally, never synced.")
                     .padding(.leading, 10)
-                    .help("~/Library/Application Support/PopChat/secrets.json, user-only permissions.")
+                    .help("~/Library/Application Support/Mia/secrets.json, user-only permissions.")
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -776,7 +776,7 @@ struct SettingsView: View {
                                 .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
-                        .help("Clear — PopChat will try again on the next send")
+                        .help("Clear — Mia will try again on the next send")
                     }
                 }
             }
@@ -923,13 +923,13 @@ struct SettingsView: View {
     }
 
     /// Local Codex bridge. Authentication and installation belong to Codex, not
-    /// PopChat, so there is deliberately no install or sign-in button here.
+    /// Mia, so there is deliberately no install or sign-in button here.
     @ViewBuilder
     private var codexAppServerRows: some View {
         editorField("Codex path") {
             HStack(spacing: 6) {
                 TextField("Auto-detect", text: $codexExecutablePath)
-                    .help("Leave empty to auto-detect (PopChat checks common install locations, then asks your login shell), or enter the path `which codex` prints in Terminal.")
+                    .help("Leave empty to auto-detect (Mia checks common install locations, then asks your login shell), or enter the path `which codex` prints in Terminal.")
                     .onChange(of: codexExecutablePath) { _, _ in
                         // Not just a status reset: this also bumps the generation so a
                         // check already running against the OLD path cannot publish
@@ -976,7 +976,7 @@ struct SettingsView: View {
         .font(.caption)
 
         Label {
-            Text("You must install and maintain Codex yourself, then run `codex login` in Terminal. PopChat does not install Codex or copy its credentials; it only starts your local `codex app-server` process. The app-server protocol is experimental, so a Codex update may occasionally be required.")
+            Text("You must install and maintain Codex yourself, then run `codex login` in Terminal. Mia does not install Codex or copy its credentials; it only starts your local `codex app-server` process. The app-server protocol is experimental, so a Codex update may occasionally be required.")
         } icon: {
             Image(systemName: "info.circle.fill")
         }
@@ -984,7 +984,7 @@ struct SettingsView: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
-        Text("Chat-only safety: PopChat requests ephemeral read-only threads with approval policy Never, and launches Codex with shell/exec, MCP, plugins/connectors, subagents, and other machine tools disabled. Managed Codex policy may override client settings, so app-server remains a local process you should trust and maintain.")
+        Text("Chat-only safety: Mia requests ephemeral read-only threads with approval policy Never, and launches Codex with shell/exec, MCP, plugins/connectors, subagents, and other machine tools disabled. Managed Codex policy may override client settings, so app-server remains a local process you should trust and maintain.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -1030,7 +1030,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 chatSection("System Prompt",
                             footer: personaStore.activeID == nil
-                                ? "Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt."
+                                ? "Sent with every conversation. The default teaches the model Mia's pasteable-block format; clear it to send no system prompt."
                                 : "A persona is active, so its prompt — not this one — is sent. Switch to Custom above to edit here.",
                             footerHelp: "Content the model wraps in <pasteable title=\"…\"> … </pasteable> tags is rendered as a copyable card in the transcript.") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1214,7 +1214,7 @@ struct SettingsView: View {
                     }
                 }
                 chatSection("Selection",
-                            footer: "Select text in any app and a small PopChat button appears below it — click to quote the selection into the panel. Needs Accessibility access.",
+                            footer: "Select text in any app and a small Mia button appears below it — click to quote the selection into the panel. Needs Accessibility access.",
                             footerHelp: "The button borrows the clipboard for a momentary ⌘C in the source app and restores it. Keyboard-only selections are not detected; the Services menu (P2) covers those.") {
                     VStack(alignment: .leading, spacing: 10) {
                         chatRow("Show selection button") {
@@ -1242,7 +1242,7 @@ struct SettingsView: View {
                                 Spacer()
                                 Button("Grant Access…") {
                                     // Deep link into the Accessibility pane; the
-                                    // user drops PopChat onto the list themselves
+                                    // user drops Mia onto the list themselves
                                     // (that drag cannot be automated by design).
                                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                                         NSWorkspace.shared.open(url)
@@ -1380,7 +1380,7 @@ struct SettingsView: View {
                 Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
                     .resizable()
                     .frame(width: 48, height: 48)
-                Text("PopChat")
+                Text("Mia")
                     .font(.system(size: 20, weight: .semibold))
                 Text("A mini AI chat app for quick, small (and usually temporary) chats.")
                     .font(.system(size: 12))

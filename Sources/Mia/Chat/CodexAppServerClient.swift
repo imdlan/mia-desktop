@@ -1,6 +1,6 @@
 import Foundation
 
-/// Readiness of the user's own Codex installation. PopChat deliberately does not
+/// Readiness of the user's own Codex installation. Mia deliberately does not
 /// install, update, or authenticate Codex; it only starts `codex app-server`.
 enum CodexAppServerStatus: Equatable {
     case unknown
@@ -13,12 +13,12 @@ enum CodexAppServerStatus: Equatable {
 
 /// Local adapter for Codex's experimental JSONL app-server protocol.
 ///
-/// Each PopChat request gets an ephemeral Codex thread with the resolved PopChat
+/// Each Mia request gets an ephemeral Codex thread with the resolved Mia
 /// history injected into it. The thread is read-only, its sandbox has no network
 /// access, and it never asks for an approval: this provider is a chat transport,
 /// not an authorization for Codex to operate on the user's machine. Codex's own
 /// `web_search` is the one exception, since it acts on the backend rather than
-/// the machine — it follows PopChat's globe toggle (see `Session.init`).
+/// the machine — it follows Mia's globe toggle (see `Session.init`).
 enum CodexAppServerClient {
     static let executablePathKey = "codexExecutablePath"
 
@@ -56,7 +56,7 @@ enum CodexAppServerClient {
     static func executableURL() -> URL? {
         let defaultsPath = UserDefaults.standard.string(forKey: executablePathKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let environmentPath = ProcessInfo.processInfo.environment["POPCHAT_CODEX_PATH"]?
+        let environmentPath = ProcessInfo.processInfo.environment["MIA_CODEX_PATH"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
@@ -112,7 +112,7 @@ enum CodexAppServerClient {
         if let cached = shellProbeCache.get() { return cached }
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let shellName = URL(fileURLWithPath: shell).lastPathComponent
-        let marker = "POPCHAT-CODEX-PATH:"
+        let marker = "MIA-CODEX-PATH:"
         let flags: [String]
         let script: String
         switch shellName {
@@ -234,7 +234,7 @@ enum CodexAppServerClient {
                         // off Swift's cooperative executor so a slow Codex process
                         // cannot starve unrelated async work.
                         let queue = DispatchQueue(
-                            label: "com.chenle.PopChat.codex-app-server.inspect.\(UUID().uuidString)",
+                            label: "app.tapfun.mia.codex-app-server.inspect.\(UUID().uuidString)",
                             qos: .userInitiated
                         )
                         queue.async {
@@ -343,7 +343,7 @@ enum CodexAppServerClient {
             // each live turn a dedicated GCD queue rather than occupying a Swift
             // concurrency cooperative-pool thread for the duration of the reply.
             let queue = DispatchQueue(
-                label: "com.chenle.PopChat.codex-app-server.turn.\(UUID().uuidString)",
+                label: "app.tapfun.mia.codex-app-server.turn.\(UUID().uuidString)",
                 qos: .userInitiated
             )
             queue.async {
@@ -412,10 +412,10 @@ enum CodexAppServerClient {
             // search, and the model would obey it over the tool being present.
             let boundary = webSearch
                 ? """
-                You are serving a normal chat inside PopChat. Do not inspect local files, run shell commands, modify files, call MCP tools, spawn agents, or otherwise act on the user's computer. Answer from the conversation, using web search when the question needs current or external information. PopChat has started this thread with a read-only filesystem and no local tool network access.
+                You are serving a normal chat inside Mia. Do not inspect local files, run shell commands, modify files, call MCP tools, spawn agents, or otherwise act on the user's computer. Answer from the conversation, using web search when the question needs current or external information. Mia has started this thread with a read-only filesystem and no local tool network access.
                 """
                 : """
-                You are serving a normal chat inside PopChat. Do not inspect local files, run shell commands, modify files, call MCP tools, spawn agents, or otherwise act on the user's computer. Answer directly from the conversation. PopChat has started this thread with read-only filesystem and no tool network access.
+                You are serving a normal chat inside Mia. Do not inspect local files, run shell commands, modify files, call MCP tools, spawn agents, or otherwise act on the user's computer. Answer directly from the conversation. Mia has started this thread with read-only filesystem and no tool network access.
                 """
             let developerInstructions = [split.systemPrompt, boundary]
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -429,7 +429,7 @@ enum CodexAppServerClient {
                 "ephemeral": .bool(true),
                 "model": .string(config.model),
                 "sandbox": .string("read-only"),
-                "serviceName": .string("popchat"),
+                "serviceName": .string("mia"),
             ])
             let threadResult = try responseResult(threadResponse, method: "thread/start")
             guard let threadID = threadResult["thread"]?.objectValue?["id"]?.stringValue else {
@@ -694,7 +694,7 @@ enum CodexAppServerClient {
         return "Codex app-server stopped responding: no protocol event arrived for \(duration). Stop the turn or update Codex, then try again."
     }
 
-    private static let missingMessage = "Codex is not installed or PopChat cannot find it. Install Codex yourself and run `codex login`. If it is already installed, run `which codex` in Terminal and paste the result into the Codex path field in Settings → Providers."
+    private static let missingMessage = "Codex is not installed or Mia cannot find it. Install Codex yourself and run `codex login`. If it is already installed, run `which codex` in Terminal and paste the result into the Codex path field in Settings → Providers."
 
     private struct Account: Sendable {
         var email: String?
@@ -817,11 +817,11 @@ enum CodexAppServerClient {
         guard let item, let type = item["type"]?.stringValue else { return nil }
         switch type {
         case "commandExecution":
-            return "⚠︎ Codex app-server attempted a local command; PopChat's read-only, no-approval policy applies."
+            return "⚠︎ Codex app-server attempted a local command; Mia's read-only, no-approval policy applies."
         case "fileChange":
-            return "⚠︎ Codex app-server attempted a file change; PopChat's read-only policy applies."
+            return "⚠︎ Codex app-server attempted a file change; Mia's read-only policy applies."
         case "mcpToolCall", "dynamicToolCall", "collabAgentToolCall":
-            return "⚠︎ Codex app-server attempted a tool call; PopChat did not grant additional permissions."
+            return "⚠︎ Codex app-server attempted a tool call; Mia did not grant additional permissions."
         default:
             return nil
         }
@@ -842,7 +842,7 @@ enum CodexAppServerClient {
             appropriateFor: nil,
             create: true
         )
-        let directory = support.appending(path: "PopChat/codex-app-server-sandbox", directoryHint: .isDirectory)
+        let directory = support.appending(path: "Mia/codex-app-server-sandbox", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -954,7 +954,7 @@ private final class InactivityWatchdog: @unchecked Sendable {
         self.timeout = max(timeout, 0.05)
         self.onTimeout = onTimeout
         let timer = DispatchSource.makeTimerSource(
-            queue: DispatchQueue(label: "com.chenle.PopChat.codex-app-server.watchdog")
+            queue: DispatchQueue(label: "app.tapfun.mia.codex-app-server.watchdog")
         )
         self.timer = timer
         let interval = max(0.05, min(self.timeout / 4, 5))
@@ -1036,7 +1036,7 @@ private final class Session: @unchecked Sendable {
         // the user's machine — it runs on the model backend, the sandbox stays
         // read-only and `networkAccess: false` — and Codex owns its own tool
         // loop, so this switch is the only web access this provider can have.
-        // It therefore follows PopChat's globe toggle instead of being pinned
+        // It therefore follows Mia's globe toggle instead of being pinned
         // off; a fresh process per turn is what makes that a launch argument.
         // The key is an ENUM (`disabled`/`cached`/`indexed`/`live`) and Codex
         // refuses to start on an unknown variant, so this is not a Bool spelled
@@ -1096,8 +1096,8 @@ private final class Session: @unchecked Sendable {
     func initialize() throws {
         let response = try request(method: "initialize", params: [
             "clientInfo": .object([
-                "name": .string("popchat"),
-                "title": .string("PopChat"),
+                "name": .string("mia"),
+                "title": .string("Mia"),
                 "version": .string("1.0.0"),
             ]),
         ])

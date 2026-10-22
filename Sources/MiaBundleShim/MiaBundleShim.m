@@ -20,14 +20,14 @@
 // method family (consumes self, returns +1); a Swift @objc func cannot declare
 // those conventions and swizzling it in leaks or over-releases.
 
-#import "PopChatBundleShim.h"
+#import "MiaBundleShim.h"
 #import <objc/runtime.h>
 #import <stdatomic.h>
 
 static NSString *appRoot;                      // Bundle.main.bundlePath, captured at install
 static _Atomic NSUInteger redirectCount;
 
-static NSString *PopChatRedirectedPath(NSString *path) {
+static NSString *MiaRedirectedPath(NSString *path) {
     if (appRoot == nil || path == nil) return path;
     if (![path.pathExtension isEqualToString:@"bundle"]) return path;
     NSString *standardized = path.stringByStandardizingPath;
@@ -41,31 +41,31 @@ static NSString *PopChatRedirectedPath(NSString *path) {
     return inResources;
 }
 
-@interface NSBundle (PopChatResourceBundleRedirect)
+@interface NSBundle (MiaResourceBundleRedirect)
 // Declared as init-family so ARC applies initWithPath:'s ownership rules to the
 // swapped-in implementation as well.
-- (instancetype)popchat_initWithPath:(NSString *)path __attribute__((objc_method_family(init)));
+- (instancetype)mia_initWithPath:(NSString *)path __attribute__((objc_method_family(init)));
 @end
 
-@implementation NSBundle (PopChatResourceBundleRedirect)
-- (instancetype)popchat_initWithPath:(NSString *)path {
+@implementation NSBundle (MiaResourceBundleRedirect)
+- (instancetype)mia_initWithPath:(NSString *)path {
     // After the exchange this selector carries Foundation's original -initWithPath:.
-    return [self popchat_initWithPath:PopChatRedirectedPath(path)];
+    return [self mia_initWithPath:MiaRedirectedPath(path)];
 }
 @end
 
-void PopChatInstallResourceBundleRedirect(void) {
+void MiaInstallResourceBundleRedirect(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         // Captured BEFORE the swizzle: creating the main bundle must not recurse
         // into the redirect.
         appRoot = NSBundle.mainBundle.bundlePath.stringByStandardizingPath;
         Method original = class_getInstanceMethod(NSBundle.class, @selector(initWithPath:));
-        Method replacement = class_getInstanceMethod(NSBundle.class, @selector(popchat_initWithPath:));
+        Method replacement = class_getInstanceMethod(NSBundle.class, @selector(mia_initWithPath:));
         if (original && replacement) method_exchangeImplementations(original, replacement);
     });
 }
 
-NSUInteger PopChatResourceBundleRedirectCount(void) {
+NSUInteger MiaResourceBundleRedirectCount(void) {
     return atomic_load(&redirectCount);
 }

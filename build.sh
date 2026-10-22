@@ -1,8 +1,8 @@
 #!/bin/bash
-# Builds PopChat.app into dist/. SwiftPM produces the binary; this script wraps it
+# Builds Mia.app into dist/. SwiftPM produces the binary; this script wraps it
 # in an app bundle (LSUIElement menu bar app) and signs it.
 #
-# Signing identity comes from POPCHAT_SIGN_IDENTITY; the default "-" is ad-hoc, which
+# Signing identity comes from MIA_SIGN_IDENTITY; the default "-" is ad-hoc, which
 # is right for local iteration. release.sh sets it to the Developer ID and that branch
 # additionally enables the hardened runtime + a secure timestamp, both of which
 # notarization refuses to proceed without.
@@ -10,20 +10,20 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 CONFIG="${1:-release}"
-SIGN_ID="${POPCHAT_SIGN_IDENTITY:--}"
+SIGN_ID="${MIA_SIGN_IDENTITY:--}"
 # SwiftPM's generated Bundle.module accessors embed the build-products directory's
 # ABSOLUTE PATH as a string literal in the binary (a dev-time fallback lookup), so a
 # build made here ships "/Users/<name>/..." inside the executable. release.sh points
-# POPCHAT_SCRATCH at a neutral path so the published DMG carries no home directory.
-SCRATCH="${POPCHAT_SCRATCH:-.build}"
+# MIA_SCRATCH at a neutral path so the published DMG carries no home directory.
+SCRATCH="${MIA_SCRATCH:-.build}"
 
 # SDK: Command Line Tools 27.0 (beta, September 2026) made its default SDK's SwiftUI
 # declare @State and friends as MACROS whose plugin (libSwiftUIMacros) ships only
 # inside Xcode, so under the CLT every SwiftUI file fails with "plugin for module
 # 'SwiftUIMacros' not found". Until a CLT carries the plugin, build against the
-# newest installed SDK that predates it. POPCHAT_SDK overrides; empty = toolchain default.
-SDK="${POPCHAT_SDK-}"
-if [ -z "${POPCHAT_SDK+x}" ]; then
+# newest installed SDK that predates it. MIA_SDK overrides; empty = toolchain default.
+SDK="${MIA_SDK-}"
+if [ -z "${MIA_SDK+x}" ]; then
     TOOLCHAIN_PLUGINS="$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins"
     SDK_DIR="$(dirname "$(xcrun --show-sdk-path)")"
     if [ ! -e "$TOOLCHAIN_PLUGINS/libSwiftUIMacros.dylib" ] \
@@ -36,39 +36,39 @@ fi
 
 # --build-system native, explicitly: swift-build's newer default backend lays products
 # out differently (.build/out/Products/<Config>) and generates a different Bundle.module
-# accessor; the paths below and Sources/PopChatBundleShim are written against native.
+# accessor; the paths below and Sources/MiaBundleShim are written against native.
 #
-# POPCHAT_ARCHES="arm64 x86_64" builds a universal binary — each --arch adds a
+# MIA_ARCHES="arm64 x86_64" builds a universal binary — each --arch adds a
 # slice. A universal build cannot share a scratch directory with single-arch
-# builds; point POPCHAT_SCRATCH at its own path.
+# builds; point MIA_SCRATCH at its own path.
 ARCH_FLAGS=""
-if [ -n "${POPCHAT_ARCHES:-}" ]; then
-    for arch in $POPCHAT_ARCHES; do ARCH_FLAGS="$ARCH_FLAGS --arch $arch"; done
+if [ -n "${MIA_ARCHES:-}" ]; then
+    for arch in $MIA_ARCHES; do ARCH_FLAGS="$ARCH_FLAGS --arch $arch"; done
 fi
 swift build -c "$CONFIG" --scratch-path "$SCRATCH" --build-system native ${SDK:+--sdk "$SDK"} $ARCH_FLAGS
 
 # Products land at different paths per build system and per arch set:
-#   native, single-arch:  $SCRATCH/$CONFIG/PopChat
-#   multi-arch (--arch):  $SCRATCH/apple/Products/$CONFIG/PopChat
+#   native, single-arch:  $SCRATCH/$CONFIG/Mia
+#   multi-arch (--arch):  $SCRATCH/apple/Products/$CONFIG/Mia
 # Probe rather than assume, and always take the bundles from the directory the
 # binary was found in — they sit next to it in every layout.
 BIN=""
-for candidate in "$SCRATCH/$CONFIG/PopChat" \
-                 "$SCRATCH/apple/Products/$CONFIG/PopChat" \
-                 "$SCRATCH/universal/$CONFIG/PopChat" \
-                 "$SCRATCH/out/Products/$CONFIG/PopChat"; do
+for candidate in "$SCRATCH/$CONFIG/Mia" \
+                 "$SCRATCH/apple/Products/$CONFIG/Mia" \
+                 "$SCRATCH/universal/$CONFIG/Mia" \
+                 "$SCRATCH/out/Products/$CONFIG/Mia"; do
     if [ -f "$candidate" ]; then BIN="$candidate"; break; fi
 done
 if [ -z "$BIN" ]; then
-    echo "error: built PopChat binary not found under $SCRATCH" >&2
+    echo "error: built Mia binary not found under $SCRATCH" >&2
     exit 1
 fi
 PRODUCTS_DIR="$(cd "$(dirname "$BIN")" && pwd)"
-APP="dist/PopChat.app"
+APP="dist/Mia.app"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/PopChat"
+cp "$BIN" "$APP/Contents/MacOS/Mia"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # CFBundleIconFile
 
@@ -98,7 +98,7 @@ else
 fi
 # From INSIDE the assembled app, because that is the only place the check means
 # anything: the dependencies' Bundle.module accessors never look in Contents/Resources
-# (see Sources/PopChatBundleShim), and a copy that ran fine from .build/ shipped a
+# (see Sources/MiaBundleShim), and a copy that ran fine from .build/ shipped a
 # DMG that crashed on the first hotkey recorder or LaTeX message everywhere else.
-"$APP/Contents/MacOS/PopChat" --smoke-bundles
+"$APP/Contents/MacOS/Mia" --smoke-bundles
 echo "Run with: open $APP"

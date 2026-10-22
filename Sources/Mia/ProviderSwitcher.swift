@@ -190,7 +190,7 @@ struct ProviderSwitcher: View {
 
     private var addProviderRow: some View {
         dimRow(icon: "plus", title: "Add provider…", key: "add") {
-            close { NotificationCenter.default.post(name: .popChatOpenSettings, object: nil) }
+            close { NotificationCenter.default.post(name: .miaOpenSettings, object: nil) }
         }
     }
 
@@ -420,7 +420,7 @@ struct ProviderSwitcher: View {
 
     private var footer: some View {
         Button {
-            close { NotificationCenter.default.post(name: .popChatOpenSettings, object: nil) }
+            close { NotificationCenter.default.post(name: .miaOpenSettings, object: nil) }
         } label: {
             HStack(spacing: 8) {
                 Text("Manage providers…")

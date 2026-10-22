@@ -1,12 +1,12 @@
 import SwiftUI
 
 extension Notification.Name {
-    static let popChatOpenSettings = Notification.Name("PopChatOpenSettings")
+    static let miaOpenSettings = Notification.Name("MiaOpenSettings")
     /// Posted by FloatingPanel when ⌘V carries files/an image to attach.
-    static let popChatAttachPasteboard = Notification.Name("PopChatAttachPasteboard")
+    static let miaAttachPasteboard = Notification.Name("MiaAttachPasteboard")
     /// Posted by the Services handler (AppDelegate.askWithSelection) with the
     /// quoted selection as the object, for the composer to append.
-    static let popChatQuoteSelection = Notification.Name("PopChatQuoteSelection")
+    static let miaQuoteSelection = Notification.Name("MiaQuoteSelection")
 }
 
 /// The "Glass" panel: translucent rounded shell, header chrome as overlay pills

@@ -31,14 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: "bubble.left.and.bubble.right.fill",
-                accessibilityDescription: "PopChat"
+                accessibilityDescription: "Mia"
             )
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        KeyboardShortcuts.onKeyUp(for: .togglePopChat) { [weak self] in
+        KeyboardShortcuts.onKeyUp(for: .toggleMia) { [weak self] in
             self?.panelController.toggle()
         }
 
@@ -64,11 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ), self.panelController.chatStore.send(quote) {
                 return
             }
-            NotificationCenter.default.post(name: .popChatQuoteSelection, object: quote)
+            NotificationCenter.default.post(name: .miaQuoteSelection, object: quote)
         }
         selectionButton?.start()
 
-        // "Dismiss PopChat" means all of it: a floating Settings window left
+        // "Dismiss Mia" means all of it: a floating Settings window left
         // hovering over the app the user returned to reads as stuck. Only
         // USER-initiated dismissals (hotkey, Esc, ⌘W, close button) fire this —
         // the focus-loss auto-hide must not yank Settings away while the user
@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NotificationCenter.default.addObserver(
-            forName: .popChatOpenSettings, object: nil, queue: .main
+            forName: .miaOpenSettings, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.openSettings() }
         }
@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.presentLaunchUI(loginItem: loginItem)
         }
 
-        // One-time pointer at "Ask PopChat About Selection" (P2): the service
+        // One-time pointer at "Ask Mia About Selection" (P2): the service
         // must be enabled — and is best given a shortcut — in System Settings,
         // which nobody guesses. Deliberately NOT on the first launch ever
         // (that one already gets the orientation popover; two hints at once
@@ -124,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// MUST be read during `applicationDidFinishLaunching` — it inspects the
     /// launch Apple event, which is only the current event that early. A login
     /// launch is the one case where showing the panel is wrong: the user asked
-    /// for PopChat to be *ready*, not to greet them at every boot.
+    /// for Mia to be *ready*, not to greet them at every boot.
     private var launchedAsLoginItem: Bool {
         guard let event = NSAppleEventManager.shared().currentAppleEvent,
               event.eventID == kAEOpenApplication else { return false }
@@ -177,11 +177,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showMenu() {
         let menu = NSMenu()
 
-        let toggleItem = NSMenuItem(title: "Toggle PopChat", action: #selector(togglePanel), keyEquivalent: "")
+        let toggleItem = NSMenuItem(title: "Toggle Mia", action: #selector(togglePanel), keyEquivalent: "")
         toggleItem.target = self
         // Shows the recorded global hotkey on the right, and keeps itself in
         // sync when the Recorder in Settings changes it.
-        toggleItem.setShortcut(for: .togglePopChat)
+        toggleItem.setShortcut(for: .toggleMia)
         menu.addItem(toggleItem)
 
         menu.addItem(.separator())
@@ -204,7 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit PopChat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Mia", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
         // Delegate disables the global hotkey while the menu tracks — see the
@@ -221,7 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Services (P2: ask about selection)
 
-    /// The "Ask PopChat About Selection" Services item (Info.plist NSServices →
+    /// The "Ask Mia About Selection" Services item (Info.plist NSServices →
     /// NSMessage). The selection arrives on the pasteboard; a blank one still
     /// shows the panel — "ask, no quote" beats a menu item that does nothing.
     ///
@@ -229,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// "dismiss" — a second invocation with the panel already up must add the
     /// quote, not eat the panel. And it is the same nonactivating path ⌥Space
     /// takes: the panel orders in over the source app without activating
-    /// PopChat, so the user's document keeps focus; the composer still becomes
+    /// Mia, so the user's document keeps focus; the composer still becomes
     /// first responder (show() bumps focusBump), which is what makes the
     /// prefilled quote immediately editable.
     @objc func askWithSelection(_ pboard: NSPasteboard, userData: String, error: NSErrorPointer) {
@@ -247,18 +247,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // must never invalidate the transcript), so cross-boundary injections
         // go through the same one-shot NotificationCenter channel the
         // pasteboard-attachment path uses.
-        NotificationCenter.default.post(name: .popChatQuoteSelection, object: quote)
+        NotificationCenter.default.post(name: .miaQuoteSelection, object: quote)
     }
 
 
-    /// PopChat never installs anything itself — this hands the user off to the
+    /// Mia never installs anything itself — this hands the user off to the
     /// release page, where the DMG they already know how to use is waiting.
     @objc private func openReleasePage() {
         guard let release = updateChecker.availableRelease else { return }
         NSWorkspace.shared.open(release.page)
     }
 
-    /// Clicking into another app dismisses ALL of PopChat — Settings included.
+    /// Clicking into another app dismisses ALL of Mia — Settings included.
     /// Both windows float above whatever the user switched to (the panel by
     /// design, Settings because it must open over the floating panel), so
     /// anything left behind hovers ON TOP of the other app and reads as stuck.
@@ -330,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "PopChat"
+            window.title = "Mia"
             // The tab strip sits on the (transparent) titlebar so window, strip
             // and form read as one panel; the title itself stays visible above
             // the tabs. `title` also feeds Exposé and accessibility.
@@ -355,11 +355,11 @@ extension AppDelegate: NSMenuDelegate {
     // closes. Unregister for the menu session instead (KeyboardShortcuts'
     // documented pattern for shortcut-displaying menu items).
     func menuWillOpen(_ menu: NSMenu) {
-        KeyboardShortcuts.disable(.togglePopChat)
+        KeyboardShortcuts.disable(.toggleMia)
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        KeyboardShortcuts.enable(.togglePopChat)
+        KeyboardShortcuts.enable(.toggleMia)
     }
 }
 

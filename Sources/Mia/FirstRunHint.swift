@@ -4,7 +4,7 @@ import KeyboardShortcuts
 
 /// One-time orientation for a brand-new install.
 ///
-/// PopChat is `LSUIElement`: launching it puts a status item in the menu bar and
+/// Mia is `LSUIElement`: launching it puts a status item in the menu bar and
 /// shows nothing else, so a first-time user sees their double-click do
 /// *nothing*. The panel now opens on first launch, but that alone doesn't teach
 /// the two facts they need to find it again — the hotkey, and that the app lives
@@ -23,7 +23,7 @@ enum FirstRunHint {
     /// The recorded shortcut, not a hardcoded "⌥Space" — Settings can rebind it,
     /// and a hint that names the wrong keys is worse than no hint.
     static var shortcutDescription: String {
-        KeyboardShortcuts.getShortcut(for: .togglePopChat).map(String.init(describing:)) ?? ""
+        KeyboardShortcuts.getShortcut(for: .toggleMia).map(String.init(describing:)) ?? ""
     }
 
     @MainActor
@@ -40,7 +40,7 @@ enum FirstRunHint {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
-    /// P2: one-time pointer at the "Ask PopChat About Selection" service. Unlike
+    /// P2: one-time pointer at the "Ask Mia About Selection" service. Unlike
     /// the orientation hint this targets EXISTING installs too — the feature is
     /// invisible until enabled in System Settings, which nobody guesses. Gated
     /// here (not at the call site) so every future entry point gets once-ever
@@ -80,7 +80,7 @@ private struct HintCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("PopChat lives up here")
+            Text("Mia lives up here")
                 .font(.system(size: 13, weight: .semibold))
 
             VStack(alignment: .leading, spacing: 5) {
@@ -129,7 +129,7 @@ private struct ServicesHintCard: View {
                 .font(.system(size: 13, weight: .semibold))
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("Select text in any app, then App menu → Services → Ask PopChat About Selection to drop it into the composer as a quote.")
+                Text("Select text in any app, then App menu → Services → Ask Mia About Selection to drop it into the composer as a quote.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

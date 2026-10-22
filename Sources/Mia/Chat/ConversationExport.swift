@@ -21,7 +21,7 @@ enum ConversationExport {
     /// blank lines. Message bodies are the stored markdown, verbatim — fenced
     /// code blocks survive because nothing here reflows them.
     static func markdown(conversation: Conversation, exportedAt: Date = Date()) -> String {
-        let header = "# \(conversation.title)\n*Exported from PopChat · "
+        let header = "# \(conversation.title)\n*Exported from Mia · "
             + stampFormatter.string(from: exportedAt) + "*"
         var blocks: [String] = []
         for message in conversation.messages {

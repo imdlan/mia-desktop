@@ -6,7 +6,7 @@ import Network
 extension Notification.Name {
     /// Posted when ChatGPT sign-in state changes (sign in / out / forced sign-out
     /// on a failed refresh) so stores holding non-observable auth state can republish.
-    static let popChatChatGPTAuthChanged = Notification.Name("popChatChatGPTAuthChanged")
+    static let miaChatGPTAuthChanged = Notification.Name("miaChatGPTAuthChanged")
 }
 
 /// "Sign in with ChatGPT" — the OAuth 2.1 PKCE flow used by OpenAI's Codex CLI,
@@ -24,8 +24,8 @@ enum ChatGPTAuth {
     private static let redirectPort: UInt16 = 1455
     private static let redirectPath = "/auth/callback"
     private static let scope = "openid profile email offline_access"
-    static let originator = "popchat"
-    static let userAgent = "PopChat/1.0 (macOS)"
+    static let originator = "mia"
+    static let userAgent = "Mia/1.0 (macOS)"
 
     static let defaultModel = "gpt-5.5"
     /// The Codex backend serves a fixed catalog — no /models endpoint. Mirrors
@@ -110,7 +110,7 @@ enum ChatGPTAuth {
         guard let data = try? JSONEncoder().encode(tokens),
               let json = String(data: data, encoding: .utf8) else { return }
         SecretStore.set(json, account: secretsAccount)
-        NotificationCenter.default.post(name: .popChatChatGPTAuthChanged, object: nil)
+        NotificationCenter.default.post(name: .miaChatGPTAuthChanged, object: nil)
     }
 
     static var isSignedIn: Bool { loadTokens() != nil }
@@ -122,7 +122,7 @@ enum ChatGPTAuth {
 
     static func signOut() {
         SecretStore.delete(account: secretsAccount)
-        NotificationCenter.default.post(name: .popChatChatGPTAuthChanged, object: nil)
+        NotificationCenter.default.post(name: .miaChatGPTAuthChanged, object: nil)
     }
 
     // MARK: - Interactive sign-in
@@ -210,7 +210,7 @@ enum ChatGPTAuth {
                         guard let requestLine,
                               let result = parseCallback(requestLine: requestLine, expectedState: expectedState) else {
                             // Favicon fetches etc. — answer politely, keep waiting.
-                            respond(connection, status: "404 Not Found", body: "PopChat: nothing here.")
+                            respond(connection, status: "404 Not Found", body: "Mia: nothing here.")
                             return
                         }
                         switch result {
@@ -218,7 +218,7 @@ enum ChatGPTAuth {
                             respond(
                                 connection,
                                 status: "200 OK",
-                                body: "<html><body style=\"font-family:-apple-system;text-align:center;padding-top:80px\"><h2>Signed in</h2><p>You can close this tab and return to PopChat.</p></body></html>"
+                                body: "<html><body style=\"font-family:-apple-system;text-align:center;padding-top:80px\"><h2>Signed in</h2><p>You can close this tab and return to Mia.</p></body></html>"
                             )
                             if resumed.claim() {
                                 listener.stateUpdateHandler = nil

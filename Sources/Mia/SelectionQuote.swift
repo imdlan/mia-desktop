@@ -1,7 +1,7 @@
 import Foundation
 
 /// P2 "ask about selection": the blockquote the composer is prefilled with when
-/// the Services handler (`askWithSelection`) hands PopChat text selected in
+/// the Services handler (`askWithSelection`) hands Mia text selected in
 /// another app. A pure function so the format is smoke-testable without GUI —
 /// the Services plumbing around it can't be driven headlessly.
 enum SelectionQuote {

@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "PopChat",
+    name: "Mia",
     platforms: [.macOS(.v14)],
     dependencies: [
         // Pinned below 1.16.0: later versions contain #Preview macros, which fail to
@@ -14,11 +14,11 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "PopChat",
-            dependencies: ["KeyboardShortcuts", "CoreXLSX", "Splash", "SwiftMath", "PopChatBundleShim"],
-            path: "Sources/PopChat"
+            name: "Mia",
+            dependencies: ["KeyboardShortcuts", "CoreXLSX", "Splash", "SwiftMath", "MiaBundleShim"],
+            path: "Sources/Mia"
         ),
         // Objective-C: the Bundle.module redirect for the assembled .app (see the .m).
-        .target(name: "PopChatBundleShim", path: "Sources/PopChatBundleShim"),
+        .target(name: "MiaBundleShim", path: "Sources/MiaBundleShim"),
     ]
 )
