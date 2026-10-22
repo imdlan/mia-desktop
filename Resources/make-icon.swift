@@ -1,130 +1,136 @@
-// Renders Mia's app icon at every size an .icns needs.
-// Each size is drawn natively rather than downscaled from 1024, so the 16pt and
-// 32pt variants keep crisp edges instead of turning to mush.
+// Renders Mia's app icon at every size an .icns needs, from a finished logo
+// source image (RGBA PNG, squircle-cropped, transparent outside the shape).
+//
+//   swift Resources/make-icon.swift <source.png> <out.iconset>
+//   iconutil -c icns <out.iconset> -o Resources/AppIcon.icns
+//
+// The source art is normalised before scaling: the opaque block is detected,
+// rescaled to Apple's canonical 824/1024 art width, and re-centred on a fresh
+// 1024 canvas — so a logo authored slightly larger or off-centre still sits in
+// the Dock exactly as tall as the system icons beside it. Sizes below 128 skip
+// nothing here (the source is a finished raster); small sizes rely on Core
+// Graphics' high-quality downsampling, which keeps the silhouette readable.
 import AppKit
 
-let outDir = CommandLine.arguments[1]
+let args = CommandLine.arguments
+guard args.count == 3 else {
+    FileHandle.standardError.write("usage: swift make-icon.swift <source.png> <out.iconset>\n".data(using: .utf8)!)
+    exit(1)
+}
+let sourceURL = URL(fileURLWithPath: args[1])
+let outDir = URL(fileURLWithPath: args[2])
 
-/// A superellipse ("squircle") — macOS icon corners are continuous curves, not
-/// circular arcs, and a plain rounded rect reads visibly wrong next to system icons.
-func squircle(in r: CGRect) -> CGPath {
-    let p = CGMutablePath()
-    let n = 5.0                       // squareness; 5 approximates Apple's shape
-    let a = r.width / 2, b = r.height / 2
-    let cx = r.midX, cy = r.midY
-    let steps = 720
-    for i in 0...steps {
-        let t = Double(i) / Double(steps) * 2 * .pi
-        let ct = cos(t), st = sin(t)
-        let x = cx + a * pow(abs(ct), 2 / n) * (ct < 0 ? -1 : 1)
-        let y = cy + b * pow(abs(st), 2 / n) * (st < 0 ? -1 : 1)
-        i == 0 ? p.move(to: CGPoint(x: x, y: y)) : p.addLine(to: CGPoint(x: x, y: y))
+guard let source = NSImage(contentsOf: sourceURL),
+      let cg = source.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    FileHandle.standardError.write("error: cannot read \(args[1]) as PNG\n".data(using: .utf8)!)
+    exit(1)
+}
+
+// --- Normalise: find the opaque art block, scale to 824/1024, centre it ------
+
+/// Bounding box of pixels above the alpha threshold, in CG coordinates
+/// (origin bottom-left), computed from a downscaled probe — exact to a couple
+/// of pixels, which the 9% margin absorbs easily.
+func artBlock(of image: CGImage, alphaThreshold: UInt8 = 16) -> CGRect? {
+    let probe = 256
+    guard let ctx = CGContext(data: nil, width: probe, height: probe,
+                              bitsPerComponent: 8, bytesPerRow: probe * 4,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    ctx.interpolationQuality = .high
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: probe, height: probe))
+    guard let data = ctx.data else { return nil }
+    let px = data.bindMemory(to: UInt8.self, capacity: probe * probe * 4)
+    var minX = probe, minY = probe, maxX = -1, maxY = -1
+    for y in 0..<probe {
+        for x in 0..<probe {
+            if px[(y * probe + x) * 4 + 3] >= alphaThreshold {
+                if x < minX { minX = x }; if x > maxX { maxX = x }
+                if y < minY { minY = y }; if y > maxY { maxY = y }
+            }
+        }
     }
-    p.closeSubpath()
-    return p
+    guard maxX >= minX, maxY >= minY else { return nil }
+    let scale = CGFloat(image.width) / CGFloat(probe)
+    return CGRect(x: CGFloat(minX) * scale, y: CGFloat(minY) * scale,
+                  width: CGFloat(maxX - minX + 1) * scale,
+                  height: CGFloat(maxY - minY + 1) * scale)
 }
 
-/// The chat bubble: a rounded rect with a tail sweeping off the bottom-left,
-/// built as one path so the fill has no seam where the tail meets the body.
-func bubble(in r: CGRect) -> CGPath {
-    let p = CGMutablePath()
-    let rad = r.width * 0.26
-    let tailW = r.width * 0.22, tailH = r.height * 0.30
-    let bottom = r.minY + tailH
+let canvas = 1024
+let canonicalArt: CGFloat = 824   // Apple's macOS template art width
+let cs = CGColorSpace(name: CGColorSpace.sRGB)!
 
-    p.move(to: CGPoint(x: r.minX + rad, y: bottom))
-    p.addLine(to: CGPoint(x: r.minX + tailW * 1.25, y: bottom))
-    // tail: out to the point, then a curve back up into the body's left edge
-    p.addCurve(to: CGPoint(x: r.minX + tailW * 0.06, y: r.minY),
-               control1: CGPoint(x: r.minX + tailW * 1.05, y: bottom - tailH * 0.42),
-               control2: CGPoint(x: r.minX + tailW * 0.62, y: r.minY + tailH * 0.20))
-    p.addCurve(to: CGPoint(x: r.minX, y: bottom + rad),
-               control1: CGPoint(x: r.minX + tailW * 0.34, y: r.minY + tailH * 0.66),
-               control2: CGPoint(x: r.minX, y: bottom + rad * 0.55))
-    p.addArc(tangent1End: CGPoint(x: r.minX, y: r.maxY),
-             tangent2End: CGPoint(x: r.maxX, y: r.maxY), radius: rad)
-    p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.maxY),
-             tangent2End: CGPoint(x: r.maxX, y: bottom), radius: rad)
-    p.addArc(tangent1End: CGPoint(x: r.maxX, y: bottom),
-             tangent2End: CGPoint(x: r.minX, y: bottom), radius: rad)
-    p.closeSubpath()
-    return p
-}
-
-func draw(size: Int) -> Data {
+// The art block drawn centred at canonical size on a transparent 1024 canvas.
+// Aspect ratio is preserved (fit, not fill); a square logo fills all 824.
+func normalised(size: Int) -> CGImage {
     let s = CGFloat(size)
-    let cs = CGColorSpace(name: CGColorSpace.sRGB)!
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
                         bytesPerRow: 0, space: cs,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.setShouldAntialias(true)
     ctx.interpolationQuality = .high
+    ctx.setShouldAntialias(true)
 
-    // Icon art occupies ~82% of the canvas; the rest is the margin every macOS
-    // icon leaves so adjacent icons in the Dock don't touch.
-    let inset = s * 0.09
-    let art = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let shape = squircle(in: art)
+    let art = artBlock(of: cg) ?? CGRect(x: 82, y: 82, width: 860, height: 860)
+    // fit maps SOURCE pixels → canvas pixels: the art block ends up canonical
+    // (824/1024) wide. The draw call below scales the WHOLE 1024 source image
+    // (margins included), so the dest side is 1024·fit, not art.width·fit —
+    // sizing dest by the block alone shrinks the art by the block's share of
+    // the canvas (~19%) and the icon reads small in the Dock.
+    let fit = min(canonicalArt / art.width, canonicalArt / art.height) * (s / 1024)
+    let drawW = CGFloat(cg.width) * fit, drawH = CGFloat(cg.height) * fit
+    // Centre by the art block's centre, not the whole image's — the source
+    // margins are uneven, and optical centring follows the visible block.
+    let dest = CGRect(x: s / 2 - art.midX * fit,
+                      y: s / 2 - art.midY * fit,
+                      width: drawW, height: drawH)
+    ctx.draw(cg, in: dest)
 
-    // Ambient shadow, skipped at small sizes where it only muddies the edge.
-    if size >= 128 {
-        ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.012),
-                      blur: s * 0.030,
-                      color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.28))
-        ctx.addPath(shape)
-        ctx.setFillColor(CGColor(srgbRed: 0.30, green: 0.34, blue: 0.86, alpha: 1))
-        ctx.fillPath()
-        ctx.restoreGState()
+    // Below ~32px, downsampling averages the two white dots (each ~1px at 16)
+    // into the purple bubble until the icon is a flat blob. Re-draw them from
+    // FIXED geometry instead of detection: the source carries other whitish
+    // regions (top sheen, the bubble's notch) and any centroid-based hunt
+    // drifts off the real dots. The ratios below are measured off the 512px
+    // render, where the downsampled dots are still sharp: dot centres at
+    // x = 0.365 / 0.635 of the art width (symmetric), y = 0.477, diameter
+    // 0.176 of the art width.
+    if size <= 32 {
+        let artDest = CGRect(x: dest.minX + art.minX * fit,
+                             y: dest.minY + art.minY * fit,
+                             width: art.width * fit, height: art.height * fit)
+        let dotCentres = [CGPoint(x: 0.365, y: 0.477), CGPoint(x: 0.635, y: 0.477)]
+        let spread = (dotCentres[1].x - dotCentres[0].x) * artDest.width
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        if spread >= 6.0 {
+            // Two dots only when the canvas can hold them AND the purple gap
+            // between them; cap at 40% of the spread so it always does.
+            let d = min(0.176 * artDest.width, spread * 0.40)
+            for c in dotCentres {
+                let cx = artDest.minX + c.x * artDest.width
+                let cy = artDest.minY + c.y * artDest.height
+                ctx.fillEllipse(in: CGRect(x: cx - d / 2, y: cy - d / 2, width: d, height: d))
+            }
+        } else {
+            // 16px canvas: two ~1.7px dots are sub-pixel and the white mixes
+            // away into the purple — one solid centred dot reads cleaner.
+            let d = CGFloat(size <= 16 ? 2.5 : 2.4)
+            let cx = artDest.midX, cy = artDest.minY + 0.477 * artDest.height
+            ctx.fillEllipse(in: CGRect(x: cx - d / 2, y: cy - d / 2, width: d, height: d))
+        }
     }
-
-    ctx.saveGState()
-    ctx.addPath(shape)
-    ctx.clip()
-
-    // Indigo → violet, matching the app's default accent.
-    let grad = CGGradient(colorsSpace: cs, colors: [
-        CGColor(srgbRed: 0.36, green: 0.40, blue: 0.95, alpha: 1),
-        CGColor(srgbRed: 0.53, green: 0.30, blue: 0.92, alpha: 1),
-    ] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(grad, start: CGPoint(x: art.minX, y: art.maxY),
-                           end: CGPoint(x: art.maxX, y: art.minY), options: [])
-
-    // Glass sheen across the top third.
-    let sheen = CGGradient(colorsSpace: cs, colors: [
-        CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.26),
-        CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.0),
-    ] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(sheen, start: CGPoint(x: art.midX, y: art.maxY),
-                           end: CGPoint(x: art.midX, y: art.midY), options: [])
-    ctx.restoreGState()
-
-    // Hairline rim for definition against light wallpapers.
-    ctx.addPath(shape)
-    ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.20))
-    ctx.setLineWidth(max(1, s * 0.004))
-    ctx.strokePath()
-
-    // The bubble, optically centred — the tail hangs low, so nudge it up.
-    let bw = art.width * 0.52
-    let br = CGRect(x: art.midX - bw / 2,
-                    y: art.midY - bw * 0.42 + art.height * 0.045,
-                    width: bw, height: bw * 0.84)
-    ctx.addPath(bubble(in: br))
-    ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.97))
-    ctx.fillPath()
-
-    let img = ctx.makeImage()!
-    let rep = NSBitmapImageRep(cgImage: img)
-    rep.size = NSSize(width: size, height: size)
-    return rep.representation(using: .png, properties: [:])!
+    return ctx.makeImage()!
 }
 
+try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 for (name, px) in [("icon_16x16", 16), ("icon_16x16@2x", 32),
                    ("icon_32x32", 32), ("icon_32x32@2x", 64),
                    ("icon_128x128", 128), ("icon_128x128@2x", 256),
                    ("icon_256x256", 256), ("icon_256x256@2x", 512),
                    ("icon_512x512", 512), ("icon_512x512@2x", 1024)] {
-    try! draw(size: px).write(to: URL(fileURLWithPath: "\(outDir)/\(name).png"))
+    let img = normalised(size: px)
+    let rep = NSBitmapImageRep(cgImage: img)
+    rep.size = NSSize(width: px, height: px)
+    try! rep.representation(using: .png, properties: [:])!
+        .write(to: outDir.appendingPathComponent("\(name).png"))
 }
-print("wrote 10 sizes to \(outDir)")
+print("wrote 10 sizes to \(outDir.path) (art normalised to \(Int(canonicalArt))/\(canvas))")
