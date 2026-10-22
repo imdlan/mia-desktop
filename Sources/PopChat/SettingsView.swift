@@ -1287,6 +1287,16 @@ struct SettingsView: View {
         }
         .background(formPageBackground)
         .onAppear { axTrusted = AXIsProcessTrusted() }
+        // The distributed broadcast above is not posted on every macOS version
+        // (this machine grants AX without it — verified: the button works while
+        // the row still says "Grant Access…"). The reliable complement: re-read
+        // trust whenever the app becomes active again, which is precisely when
+        // the user returns from System Settings after flipping the toggle.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in
+            axTrusted = AXIsProcessTrusted()
+        }
         // Granting or revoking happens in System Settings — another app — so
         // nothing local invalidates our copy. This is the system's broadcast
         // that trust changed, landing exactly while the user is looking at
