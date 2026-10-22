@@ -1054,13 +1054,20 @@ struct SettingsView: View {
                             footer: "The active persona's prompt is sent with every conversation. Custom uses the free-text system prompt.",
                             footerHelp: "Deleting the active persona switches back to Custom.") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker("Active persona", selection: $personaStore.activeID) {
-                            Text("Custom").tag(String?.none)
-                            ForEach(personaStore.personas) { persona in
-                                Text(persona.name).tag(String?.some(persona.id.uuidString))
+                        chatRow("Active persona") {
+                            Picker("Active persona", selection: $personaStore.activeID) {
+                                Text("Custom").tag(String?.none)
+                                ForEach(personaStore.personas) { persona in
+                                    Text(persona.name).tag(String?.some(persona.id.uuidString))
+                                }
                             }
+                            .labelsHidden()
                         }
-                        ForEach($personaStore.personas) { $persona in
+                        ForEach(Array($personaStore.personas.enumerated()), id: \.element.id) { offset, $persona in
+                            // Hairline between rows only — not after the last one.
+                            if offset > 0 {
+                                Divider()
+                            }
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 6) {
                                     fieldCaption("Name")
@@ -1121,7 +1128,11 @@ struct SettingsView: View {
                             footer: "Type “/name your text” in the chat field.",
                             footerHelp: "The compact form is shown in the transcript; the expanded template is what the model receives.") {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach($shortcutStore.shortcuts) { $shortcut in
+                        ForEach(Array($shortcutStore.shortcuts.enumerated()), id: \.element.id) { offset, $shortcut in
+                            // Same hairline rhythm as the persona rows.
+                            if offset > 0 {
+                                Divider()
+                            }
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 6) {
                                     fieldCaption("Name")
@@ -1187,18 +1198,27 @@ struct SettingsView: View {
                 chatSection("Titles",
                             footer: "After a reply lands, the current provider is asked once for a short title (≤24 tokens). Failures are silent; OpenAI-compatible providers only.",
                             footerHelp: "The title replaces the truncated first message in history once the first reply completes. A conversation is asked at most once.") {
-                    Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
-                        .toggleStyle(.switch)
+                    chatRow("Auto-name new chats") {
+                        Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
                 }
                 chatSection("Selection",
                             footer: "Select text in any app and a small PopChat button appears below it — click to quote the selection into the panel. Needs Accessibility access.",
                             footerHelp: "The button borrows the clipboard for a momentary ⌘C in the source app and restores it. Keyboard-only selections are not detected; the Services menu (P2) covers those.") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Show selection button", isOn: $selectionButtonEnabled)
-                            .toggleStyle(.switch)
-                        Toggle("Send selection immediately", isOn: $selectionSendImmediately)
-                            .toggleStyle(.switch)
-                            .disabled(!selectionButtonEnabled)
+                        chatRow("Show selection button") {
+                            Toggle("Show selection button", isOn: $selectionButtonEnabled)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                        }
+                        chatRow("Send selection immediately") {
+                            Toggle("Send selection immediately", isOn: $selectionSendImmediately)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                                .disabled(!selectionButtonEnabled)
+                        }
                         if axTrusted {
                             Label("Accessibility access granted", systemImage: "checkmark.circle.fill")
                                 .font(.system(size: 11.5))
@@ -1225,12 +1245,18 @@ struct SettingsView: View {
                             footer: "The model decides when to search (max 5 tool rounds).",
                             footerHelp: "web_search + fetch_url tools. Provider-native uses OpenRouter's server-side plugin and only applies when OpenRouter is the active provider; other choices fall back to DuckDuckGo with a visible notice.") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Web access available to the model", isOn: $webEnabled)
-                            .toggleStyle(.switch)
-                        Picker("Search engine", selection: $searchEngine) {
-                            ForEach(SearchEngineChoice.allCases) { choice in
-                                Text(choice.label).tag(choice.rawValue)
+                        chatRow("Web access available to the model") {
+                            Toggle("Web access available to the model", isOn: $webEnabled)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                        }
+                        chatRow("Search engine") {
+                            Picker("Search engine", selection: $searchEngine) {
+                                ForEach(SearchEngineChoice.allCases) { choice in
+                                    Text(choice.label).tag(choice.rawValue)
+                                }
                             }
+                            .labelsHidden()
                         }
                         if let account = SearchEngineChoice(rawValue: searchEngine)?.apiKeyAccount {
                             SecureField("Search API Key", text: $searchKeyDraft)
@@ -1284,6 +1310,20 @@ struct SettingsView: View {
             sectionFooter(footer)
                 .help(footerHelp)
                 .padding(.leading, 10)
+        }
+    }
+
+    /// One settings row of the hand-built Chat page: label leading, control
+    /// hugging the card's trailing edge — the geometry the grouped Form gives
+    /// the other tabs (accentRow/panelTintRow are the in-file precedents).
+    /// The control keeps its native size; only its position is pinned.
+    private func chatRow<Content: View>(
+        _ label: String, @ViewBuilder control: () -> Content
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+            Spacer(minLength: 12)
+            control()
         }
     }
 
