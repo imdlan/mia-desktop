@@ -4,11 +4,11 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Latest release](https://img.shields.io/github/v/release/imdlan/mia-desktop)
 
-A mini AI chat app for quick, small (and usually temporary) chats — the kind that don't need a frontier model, so it pairs nicely with lighter, locally-run ones.
+**Mia** — *Mac + intelligent assistant* — is a mini AI chat app for quick, small (and usually temporary) chats — the kind that don't need a frontier model, so it pairs nicely with lighter, locally-run ones.
 
 Press a global hotkey (default **⌥Space**) and a floating chat panel appears with the input already focused. Pin it if you want to keep the messages as a reference for your other work.
 
-<p align="center"><img src="Resources/screenshot.png" width="720" alt="Mia panel over a desktop"></p>
+<p align="center"><img src="Resources/screenshot.png" width="860" alt="The Mia floating chat panel answering a question, beside its General settings window, on a macOS desktop"></p>
 
 
 ## Features
@@ -33,13 +33,17 @@ Download the latest `Mia-x.y.z.dmg` from [Releases](https://github.com/imdlan/mi
 
 Requires **macOS 14 or later**. The liquid-glass backdrop needs macOS 26; older systems get a solid panel.
 
+### Upgrading from PopChat
+
+Mia is the renamed PopChat. On first launch it migrates everything automatically — providers, API keys, conversations, personas, slash commands, settings, and your global hotkey. Nothing is deleted; the old `PopChat` data stays in place until you remove it yourself. Because the bundle identifier changed, macOS asks you to **re-grant Accessibility access once** (Settings › Chat) if you use the selection button or the Services item.
+
 ## Build from source
 
 Needs a Swift toolchain — Xcode, or just the Command Line Tools (`xcode-select --install`).
 
 ```sh
 git clone https://github.com/imdlan/mia-desktop.git
-cd Mia
+cd mia-desktop
 ./build.sh              # release build → dist/Mia.app
 open dist/Mia.app
 ```
