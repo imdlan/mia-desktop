@@ -114,6 +114,11 @@ struct SettingsView: View {
             .formStyle(.grouped)
         }
         .frame(width: 540, height: 620)
+        // Paint the page color explicitly: the tab strip carries no background of
+        // its own, so it otherwise shows whatever is BEHIND the view — the window
+        // in the app, but the zeroed (black) buffer in the design-QA bitmap, which
+        // sank the secondary tab labels in light-mode shots.
+        .background(formPageBackground)
         // Let the page reach the window's top edge so the tab strip and the
         // traffic lights sit on one continuous panel. No-op in a plain titled
         // window (the design-QA harness), which has no titlebar inset.
@@ -1002,219 +1007,231 @@ struct SettingsView: View {
 
     // MARK: - Chat
 
-    // Real editors (4e): prompts leave the Form's label/value pattern — a
-    // vertical-axis TextField rendered the template as a right-aligned trailing
-    // "value" that grew with content. Fixed-height TextEditors in quaternary
-    // wells scroll their own text; the Form scrolls the page.
+    // Hand-built page, not a Form (providersTab's rationale, which the persona
+    // rows re-proved brutally): the grouped Form re-composes custom rows at the
+    // AppKit layer — a field kept its box but PAINTED NO TEXT, the trash button
+    // grew a "Delete Persona" form label, captions were displaced — while every
+    // probe reported the SwiftUI-side geometry as correct. Standard SwiftUI in
+    // plain cards renders exactly as written; the card chrome below reproduces
+    // the grouped look with the shared page/card colors.
     private var chatTab: some View {
-        Form {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    editorWell {
-                        TextEditor(text: $systemPromptDraft)
-                            .font(.system(size: 12))
-                            .scrollContentBackground(.hidden)
-                            .frame(height: 148)
-                    }
-                    Button("Reset to Default") {
-                        systemPromptDraft = ChatStore.defaultSystemPrompt
-                    }
-                    .disabled(systemPromptDraft == ChatStore.defaultSystemPrompt)
-                }
-                // Editing a prompt that isn't the one being sent invites a
-                // "my changes did nothing" report; the persona section below
-                // owns the wire while one is active.
-                .disabled(personaStore.activeID != nil)
-                .onChange(of: systemPromptDraft) { _, newValue in
-                    UserDefaults.standard.set(newValue, forKey: "systemPrompt")
-                }
-            } header: {
-                sectionHeader("System Prompt")
-            } footer: {
-                sectionFooter(personaStore.activeID == nil
-                    ? "Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt."
-                    : "A persona is active, so its prompt — not this one — is sent. Switch to Custom above to edit here.")
-                    .help("Content the model wraps in <pasteable title=\"…\"> … </pasteable> tags is rendered as a copyable card in the transcript.")
-            }
-            Section {
-                Picker("Active persona", selection: $personaStore.activeID) {
-                    Text("Custom").tag(String?.none)
-                    ForEach(personaStore.personas) { persona in
-                        Text(persona.name).tag(String?.some(persona.id.uuidString))
-                    }
-                }
-                // Each persona reads as two labeled groups: a boxed NAME field
-                // (crisp 1pt border = input control) and a PROMPT caption over
-                // the soft editor well. Both used one identical well treatment
-                // and no labels, so the row read as static text (user-reported).
-                // Captions sit ABOVE the field line, not beside it — a grouped
-                // Form re-reads a label/field HStack as its own row and resizes
-                // the field (see providersTab), so the field keeps its proven
-                // field-first row here.
-                ForEach($personaStore.personas) { $persona in
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                chatSection("System Prompt",
+                            footer: personaStore.activeID == nil
+                                ? "Sent with every conversation. The default teaches the model PopChat's pasteable-block format; clear it to send no system prompt."
+                                : "A persona is active, so its prompt — not this one — is sent. Switch to Custom above to edit here.",
+                            footerHelp: "Content the model wraps in <pasteable title=\"…\"> … </pasteable> tags is rendered as a copyable card in the transcript.") {
                     VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            fieldCaption("Name")
-                            HStack(spacing: 2) {
-                                TextField("", text: $persona.name)
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        Color.primary.opacity(0.05),
-                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
-                                    )
-                                    .frame(width: 140)
-                                Spacer()
-                                Button(role: .destructive) {
-                                    personaStore.remove(id: persona.id)
-                                } label: {
-                                    Image(systemName: "trash")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 24, height: 24)
-                                        .contentShape(Circle())
-                                }
-                                .buttonStyle(.plain)
-                                .help("Delete persona")
+                        editorWell {
+                            TextEditor(text: $systemPromptDraft)
+                                .font(.system(size: 12))
+                                .scrollContentBackground(.hidden)
+                                .frame(height: 148)
+                        }
+                        Button("Reset to Default") {
+                            systemPromptDraft = ChatStore.defaultSystemPrompt
+                        }
+                        .disabled(systemPromptDraft == ChatStore.defaultSystemPrompt)
+                    }
+                    .disabled(personaStore.activeID != nil)
+                    .onChange(of: systemPromptDraft) { _, newValue in
+                        UserDefaults.standard.set(newValue, forKey: "systemPrompt")
+                    }
+                }
+                chatSection("Personas",
+                            footer: "The active persona's prompt is sent with every conversation. Custom uses the free-text system prompt.",
+                            footerHelp: "Deleting the active persona switches back to Custom.") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Active persona", selection: $personaStore.activeID) {
+                            Text("Custom").tag(String?.none)
+                            ForEach(personaStore.personas) { persona in
+                                Text(persona.name).tag(String?.some(persona.id.uuidString))
                             }
                         }
-                        VStack(alignment: .leading, spacing: 4) {
-                            fieldCaption("Prompt")
-                            editorWell {
-                                TextEditor(text: $persona.prompt)
-                                    .font(.system(size: 12))
-                                    .scrollContentBackground(.hidden)
-                                    .frame(height: 56)
-                                    .overlay(alignment: .topLeading) {
-                                        if persona.prompt.isEmpty {
-                                            Text("System prompt this persona sends")
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(.tertiary)
-                                                .padding(.leading, 5)
-                                                .allowsHitTesting(false)
-                                        }
+                        ForEach($personaStore.personas) { $persona in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    fieldCaption("Name")
+                                    TextField("", text: $persona.name)
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.leading)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            Color.primary.opacity(0.05),
+                                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
+                                        )
+                                        .frame(width: 140)
+                                    Spacer(minLength: 8)
+                                    Button(role: .destructive) {
+                                        personaStore.remove(id: persona.id)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 24, height: 24)
+                                            .contentShape(Circle())
                                     }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                Button("Add Persona…") {
-                    personaStore.add()
-                }
-            } header: {
-                sectionHeader("Personas")
-            } footer: {
-                sectionFooter("The active persona's prompt is sent with every conversation. Custom uses the free-text system prompt.")
-                    .help("Deleting the active persona switches back to Custom.")
-            }
-            Section {
-                // Same labeled-groups pattern as the persona rows above: boxed
-                // NAME field vs captioned TEMPLATE well, so the two editable
-                // areas don't read as one static block.
-                ForEach($shortcutStore.shortcuts) { $shortcut in
-                    VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            fieldCaption("Name")
-                            HStack(spacing: 2) {
-                                Text("/")
-                                    .foregroundStyle(.secondary)
-                                    .padding(.leading, 4)
-                                TextField("", text: $shortcut.name)
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .focused($focusedCommandName, equals: shortcut.id)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        Color.primary.opacity(0.05),
-                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
-                                    )
-                                    .frame(width: 140)
-                                Spacer()
-                                Button(role: .destructive) {
-                                    shortcutStore.remove(id: shortcut.id)
-                                } label: {
-                                    Image(systemName: "trash")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 24, height: 24)
-                                        .contentShape(Circle())
+                                    .buttonStyle(.plain)
+                                    .help("Delete persona")
                                 }
-                                .buttonStyle(.plain)
-                                .help("Delete command")
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            fieldCaption("Template")
-                            editorWell {
-                                TextEditor(text: $shortcut.template)
-                                    .font(.system(size: 12))
-                                    .scrollContentBackground(.hidden)
-                                    .frame(height: 56)
-                                    .overlay(alignment: .topLeading) {
-                                        if shortcut.template.isEmpty {
-                                            Text("Prompt template — {input} marks where your text goes")
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(.tertiary)
-                                                .padding(.leading, 5)
-                                                .allowsHitTesting(false)
-                                        }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    fieldCaption("Prompt")
+                                    editorWell {
+                                        TextEditor(text: $persona.prompt)
+                                            .font(.system(size: 12))
+                                            .scrollContentBackground(.hidden)
+                                            .frame(height: 56)
+                                            .overlay(alignment: .topLeading) {
+                                                if persona.prompt.isEmpty {
+                                                    Text("System prompt this persona sends")
+                                                        .font(.system(size: 12))
+                                                        .foregroundStyle(.tertiary)
+                                                        .padding(.leading, 5)
+                                                        .allowsHitTesting(false)
+                                                }
+                                            }
                                     }
+                                }
                             }
                         }
-                    }
-                    .padding(.vertical, 2)
-                }
-                Button("Add Command…") {
-                    shortcutStore.add()
-                    // Focus lands after the new row exists in the hierarchy.
-                    let newID = shortcutStore.shortcuts.last?.id
-                    DispatchQueue.main.async { focusedCommandName = newID }
-                }
-            } header: {
-                sectionHeader("Slash Commands")
-            } footer: {
-                sectionFooter("Type “/name your text” in the chat field.")
-                    .help("The compact form is shown in the transcript; the expanded template is what the model receives.")
-            }
-            Section {
-                Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
-            } header: {
-                sectionHeader("Titles")
-            } footer: {
-                sectionFooter("After a reply lands, the current provider is asked once for a short title (≤24 tokens). Failures are silent; OpenAI-compatible providers only.")
-                    .help("The title replaces the truncated first message in history once the first reply completes. A conversation is asked at most once.")
-            }
-            Section {
-                Toggle("Web access available to the model", isOn: $webEnabled)
-                Picker("Search engine", selection: $searchEngine) {
-                    ForEach(SearchEngineChoice.allCases) { choice in
-                        Text(choice.label).tag(choice.rawValue)
-                    }
-                }
-                if let account = SearchEngineChoice(rawValue: searchEngine)?.apiKeyAccount {
-                    SecureField("Search API Key", text: $searchKeyDraft)
-                        .onChange(of: searchKeyDraft) { _, newValue in
-                            SecretStore.set(newValue, account: account)
+                        Button("Add Persona…") {
+                            personaStore.add()
                         }
+                    }
                 }
-            } header: {
-                sectionHeader("Web Search")
-            } footer: {
-                sectionFooter("The model decides when to search (max 5 tool rounds).")
-                    .help("web_search + fetch_url tools. Provider-native uses OpenRouter's server-side plugin and only applies when OpenRouter is the active provider; other choices fall back to DuckDuckGo with a visible notice.")
+                chatSection("Slash Commands",
+                            footer: "Type “/name your text” in the chat field.",
+                            footerHelp: "The compact form is shown in the transcript; the expanded template is what the model receives.") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach($shortcutStore.shortcuts) { $shortcut in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    fieldCaption("Name")
+                                    Text("/")
+                                        .foregroundStyle(.secondary)
+                                    TextField("", text: $shortcut.name)
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.leading)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .focused($focusedCommandName, equals: shortcut.id)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            Color.primary.opacity(0.05),
+                                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
+                                        )
+                                        .frame(width: 140)
+                                    Spacer(minLength: 8)
+                                    Button(role: .destructive) {
+                                        shortcutStore.remove(id: shortcut.id)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 24, height: 24)
+                                            .contentShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Delete command")
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    fieldCaption("Template")
+                                    editorWell {
+                                        TextEditor(text: $shortcut.template)
+                                            .font(.system(size: 12))
+                                            .scrollContentBackground(.hidden)
+                                            .frame(height: 56)
+                                            .overlay(alignment: .topLeading) {
+                                                if shortcut.template.isEmpty {
+                                                    Text("Prompt template — {input} marks where your text goes")
+                                                        .font(.system(size: 12))
+                                                        .foregroundStyle(.tertiary)
+                                                        .padding(.leading, 5)
+                                                        .allowsHitTesting(false)
+                                                }
+                                            }
+                                    }
+                                }
+                            }
+                        }
+                        Button("Add Command…") {
+                            shortcutStore.add()
+                            // Focus lands after the new row exists in the hierarchy.
+                            let newID = shortcutStore.shortcuts.last?.id
+                            DispatchQueue.main.async { focusedCommandName = newID }
+                        }
+                    }
+                }
+                chatSection("Titles",
+                            footer: "After a reply lands, the current provider is asked once for a short title (≤24 tokens). Failures are silent; OpenAI-compatible providers only.",
+                            footerHelp: "The title replaces the truncated first message in history once the first reply completes. A conversation is asked at most once.") {
+                    Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
+                        .toggleStyle(.switch)
+                }
+                chatSection("Web Search",
+                            footer: "The model decides when to search (max 5 tool rounds).",
+                            footerHelp: "web_search + fetch_url tools. Provider-native uses OpenRouter's server-side plugin and only applies when OpenRouter is the active provider; other choices fall back to DuckDuckGo with a visible notice.") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Web access available to the model", isOn: $webEnabled)
+                            .toggleStyle(.switch)
+                        Picker("Search engine", selection: $searchEngine) {
+                            ForEach(SearchEngineChoice.allCases) { choice in
+                                Text(choice.label).tag(choice.rawValue)
+                            }
+                        }
+                        if let account = SearchEngineChoice(rawValue: searchEngine)?.apiKeyAccount {
+                            SecureField("Search API Key", text: $searchKeyDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: searchKeyDraft) { _, newValue in
+                                    SecretStore.set(newValue, account: account)
+                                }
+                        }
+                    }
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 20)
+        }
+        .background(formPageBackground)
+    }
+
+    /// One grouped-card section of the hand-built Chat page: header, card,
+    /// footer — the same chrome rhythm the grouped Form gives the other tabs.
+    private func chatSection<Content: View>(
+        _ title: String, footer: String, footerHelp: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader(title)
+                .padding(.leading, 10)
+            content()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    formCardBackground,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            sectionFooter(footer)
+                .help(footerHelp)
+                .padding(.leading, 10)
         }
     }
 
@@ -1283,9 +1300,10 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
     }
 
-    /// Tiny uppercase label above the persona/command rows' two editable areas
-    /// (NAME, PROMPT/TEMPLATE). The shared vocabulary that makes the boxed name
-    /// field and the editor well read as labeled inputs, not stray static text.
+    /// Tiny uppercase label for the persona/command rows' editable areas —
+    /// inline beside the single-line name field, above the multi-line editor
+    /// well. The shared vocabulary that makes the boxed name field and the
+    /// editor well read as labeled inputs, not stray static text.
     private func fieldCaption(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
