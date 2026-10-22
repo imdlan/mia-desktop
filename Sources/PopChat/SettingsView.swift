@@ -1062,6 +1062,11 @@ struct SettingsView: View {
                                 }
                             }
                             .labelsHidden()
+                            // Menu popups stretch to the proposed width;
+                            // fixedSize wraps the selected value like the
+                            // Providers model menu, leaving the row's trailing
+                            // placement (chatRow) untouched.
+                            .fixedSize()
                         }
                         ForEach(Array($personaStore.personas.enumerated()), id: \.element.id) { offset, $persona in
                             // Hairline between rows only — not after the last one.
@@ -1202,6 +1207,10 @@ struct SettingsView: View {
                         Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
                             .toggleStyle(.switch)
                             .labelsHidden()
+                            // Form switches render at the compact ~15pt size
+                            // (General measured 30px@2x); a plain-context switch
+                            // defaults to regular (25pt tall) — mini matches.
+                            .controlSize(.mini)
                     }
                 }
                 chatSection("Selection",
@@ -1212,11 +1221,13 @@ struct SettingsView: View {
                             Toggle("Show selection button", isOn: $selectionButtonEnabled)
                                 .toggleStyle(.switch)
                                 .labelsHidden()
+                                .controlSize(.mini)
                         }
                         chatRow("Send selection immediately") {
                             Toggle("Send selection immediately", isOn: $selectionSendImmediately)
                                 .toggleStyle(.switch)
                                 .labelsHidden()
+                                .controlSize(.mini)
                                 .disabled(!selectionButtonEnabled)
                         }
                         if axTrusted {
@@ -1249,6 +1260,7 @@ struct SettingsView: View {
                             Toggle("Web access available to the model", isOn: $webEnabled)
                                 .toggleStyle(.switch)
                                 .labelsHidden()
+                                .controlSize(.mini)
                         }
                         chatRow("Search engine") {
                             Picker("Search engine", selection: $searchEngine) {
@@ -1257,6 +1269,7 @@ struct SettingsView: View {
                                 }
                             }
                             .labelsHidden()
+                            .fixedSize()
                         }
                         if let account = SearchEngineChoice(rawValue: searchEngine)?.apiKeyAccount {
                             SecureField("Search API Key", text: $searchKeyDraft)
