@@ -29,10 +29,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMainMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "bubble.left.and.bubble.right.fill",
-                accessibilityDescription: "Mia"
-            )
+            // The bundled template art (44px raster = 22pt@2x) when the .app is
+            // assembled; the SF Symbol stands in for bare swift-build runs,
+            // where the png isn't in any bundle NSImage knows about.
+            if let art = NSImage(named: "MiaMenubarIconTemplate") {
+                art.size = NSSize(width: 22, height: 22)  // show at 22pt, keep 2x pixels
+                art.isTemplate = true                     // suffix convention, made explicit
+                button.image = art
+            } else {
+                button.image = NSImage(
+                    systemSymbolName: "bubble.left.and.bubble.right.fill",
+                    accessibilityDescription: "Mia"
+                )
+            }
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])

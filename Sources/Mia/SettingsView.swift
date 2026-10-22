@@ -1379,7 +1379,7 @@ struct SettingsView: View {
             VStack(spacing: 10) {
                 Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
                     .resizable()
-                    .frame(width: 48, height: 48)
+                    .frame(width: 64, height: 64)
                 Text("Mia")
                     .font(.system(size: 20, weight: .semibold))
                 Text("A mini AI chat app for quick, small (and usually temporary) chats.")

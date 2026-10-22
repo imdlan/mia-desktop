@@ -71,6 +71,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Mia"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # CFBundleIconFile
+# Menubar template icon. "Template" suffix makes AppKit set isTemplate on load,
+# so the one alpha-only shape adapts to light/dark menus automatically.
+cp Resources/MiaMenubarIconTemplate.png "$APP/Contents/Resources/MiaMenubarIconTemplate.png"
 
 # SPM dependency resource bundles (KeyboardShortcuts localizations, SwiftMath's math
 # fonts) must ship inside the app for Bundle.module lookup to succeed — without them
