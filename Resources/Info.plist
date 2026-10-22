@@ -4,47 +4,47 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Mia</string>
 	<key>CFBundleExecutable</key>
 	<string>Mia</string>
-	<key>CFBundleIdentifier</key>
-	<string>app.tapfun.mia</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.tapfun.mia</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>Mia</string>
-	<key>CFBundleDisplayName</key>
-	<string>Mia</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>0.2.1</string>
 	<key>CFBundleVersion</key>
-	<string>10</string>
+	<string>11</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<!-- P2 "ask about selection": registers the Services menu item "Ask Mia
-	     About Selection" (delivered to AppDelegate.askWithSelection). macOS only
-	     lists the service for apps it has seen running — run the app once (or
-	     `pbs -update`) after first build. NSRequiredContext empty on purpose:
-	     no modifier/context restrictions, the item is always offered. -->
 	<key>NSServices</key>
 	<array>
 		<dict>
-			<key>NSMessage</key>
-			<string>askWithSelection</string>
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
 				<string>Ask Mia About Selection</string>
 			</dict>
+			<key>NSMessage</key>
+			<string>askWithSelection</string>
 			<key>NSRequiredContext</key>
 			<dict/>
 			<key>NSSendTypes</key>
@@ -53,20 +53,5 @@
 			</array>
 		</dict>
 	</array>
-	<!-- Providers are URLs the USER types (self-hosted vLLM/llama.cpp boxes, LAN
-	     servers, proxies), so cleartext HTTP has to be allowed for hosts unknown at
-	     build time. NSAllowsLocalNetworking alone covers only .local, unqualified
-	     names and private/link-local addresses — a plain-http provider on a public
-	     IP failed with "the App Transport Security policy requires the use of a
-	     secure connection", which read as "Mia can't add http providers".
-	     NSAllowsArbitraryLoads subsumes local networking; do NOT keep both keys —
-	     macOS ignores NSAllowsArbitraryLoads whenever NSAllowsLocalNetworking is
-	     present (verified 2026-08-17: with both keys set, the same request is still
-	     blocked). -->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 </dict>
 </plist>
