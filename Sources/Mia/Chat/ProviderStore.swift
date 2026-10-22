@@ -407,7 +407,9 @@ final class ProviderStore: ObservableObject {
         [
             chatGPTPreset(),
             codexAppServerPreset(),
-            Provider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", isPreset: true, defaultModel: "gpt-4o"),
+            // gpt-4o snapshots shut down 2027-01-14 (OpenAI deprecations,
+            // 2026-10-14); gpt-6-luna is the official replacement.
+            Provider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", isPreset: true, defaultModel: "gpt-6-luna"),
             Provider(id: UUID(), name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", isPreset: true, defaultModel: "openrouter/auto"),
             Provider(id: UUID(), name: "Ollama (local)", baseURL: "http://localhost:11434/v1", isPreset: true, defaultModel: ""),
         ]
