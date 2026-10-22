@@ -1043,50 +1043,64 @@ struct SettingsView: View {
                         Text(persona.name).tag(String?.some(persona.id.uuidString))
                     }
                 }
+                // Each persona reads as two labeled groups: a boxed NAME field
+                // (crisp 1pt border = input control) and a PROMPT caption over
+                // the soft editor well. Both used one identical well treatment
+                // and no labels, so the row read as static text (user-reported).
+                // Captions sit ABOVE the field line, not beside it — a grouped
+                // Form re-reads a label/field HStack as its own row and resizes
+                // the field (see providersTab), so the field keeps its proven
+                // field-first row here.
                 ForEach($personaStore.personas) { $persona in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 2) {
-                            TextField("name", text: $persona.name)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 13, weight: .medium))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Color.primary.opacity(0.04),
-                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
-                                )
-                                .frame(width: 140)
-                            Spacer()
-                            Button(role: .destructive) {
-                                personaStore.remove(id: persona.id)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 24, height: 24)
-                                    .contentShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Delete persona")
-                        }
-                        editorWell {
-                            TextEditor(text: $persona.prompt)
-                                .font(.system(size: 12))
-                                .scrollContentBackground(.hidden)
-                                .frame(height: 56)
-                                .overlay(alignment: .topLeading) {
-                                    if persona.prompt.isEmpty {
-                                        Text("System prompt this persona sends")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.tertiary)
-                                            .padding(.leading, 5)
-                                            .allowsHitTesting(false)
-                                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            fieldCaption("Name")
+                            HStack(spacing: 2) {
+                                TextField("", text: $persona.name)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
+                                    )
+                                    .frame(width: 140)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    personaStore.remove(id: persona.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Circle())
                                 }
+                                .buttonStyle(.plain)
+                                .help("Delete persona")
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            fieldCaption("Prompt")
+                            editorWell {
+                                TextEditor(text: $persona.prompt)
+                                    .font(.system(size: 12))
+                                    .scrollContentBackground(.hidden)
+                                    .frame(height: 56)
+                                    .overlay(alignment: .topLeading) {
+                                        if persona.prompt.isEmpty {
+                                            Text("System prompt this persona sends")
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(.tertiary)
+                                                .padding(.leading, 5)
+                                                .allowsHitTesting(false)
+                                        }
+                                    }
+                            }
                         }
                     }
                     .padding(.vertical, 2)
@@ -1101,54 +1115,63 @@ struct SettingsView: View {
                     .help("Deleting the active persona switches back to Custom.")
             }
             Section {
+                // Same labeled-groups pattern as the persona rows above: boxed
+                // NAME field vs captioned TEMPLATE well, so the two editable
+                // areas don't read as one static block.
                 ForEach($shortcutStore.shortcuts) { $shortcut in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 2) {
-                            Text("/")
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 4)
-                            TextField("name", text: $shortcut.name)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 13, weight: .medium))
-                                .focused($focusedCommandName, equals: shortcut.id)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Color.primary.opacity(0.04),
-                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
-                                )
-                                .frame(width: 140)
-                            Spacer()
-                            Button(role: .destructive) {
-                                shortcutStore.remove(id: shortcut.id)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            fieldCaption("Name")
+                            HStack(spacing: 2) {
+                                Text("/")
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 24, height: 24)
-                                    .contentShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Delete command")
-                        }
-                        editorWell {
-                            TextEditor(text: $shortcut.template)
-                                .font(.system(size: 12))
-                                .scrollContentBackground(.hidden)
-                                .frame(height: 56)
-                                .overlay(alignment: .topLeading) {
-                                    if shortcut.template.isEmpty {
-                                        Text("Prompt template — {input} marks where your text goes")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.tertiary)
-                                            .padding(.leading, 5)
-                                            .allowsHitTesting(false)
-                                    }
+                                    .padding(.leading, 4)
+                                TextField("", text: $shortcut.name)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .focused($focusedCommandName, equals: shortcut.id)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
+                                    )
+                                    .frame(width: 140)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    shortcutStore.remove(id: shortcut.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Circle())
                                 }
+                                .buttonStyle(.plain)
+                                .help("Delete command")
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            fieldCaption("Template")
+                            editorWell {
+                                TextEditor(text: $shortcut.template)
+                                    .font(.system(size: 12))
+                                    .scrollContentBackground(.hidden)
+                                    .frame(height: 56)
+                                    .overlay(alignment: .topLeading) {
+                                        if shortcut.template.isEmpty {
+                                            Text("Prompt template — {input} marks where your text goes")
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(.tertiary)
+                                                .padding(.leading, 5)
+                                                .allowsHitTesting(false)
+                                        }
+                                    }
+                            }
                         }
                     }
                     .padding(.vertical, 2)
@@ -1255,6 +1278,17 @@ struct SettingsView: View {
     private func sectionHeader(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .semibold))
+            .textCase(.uppercase)
+            .tracking(0.4)
+            .foregroundStyle(.secondary)
+    }
+
+    /// Tiny uppercase label above the persona/command rows' two editable areas
+    /// (NAME, PROMPT/TEMPLATE). The shared vocabulary that makes the boxed name
+    /// field and the editor well read as labeled inputs, not stray static text.
+    private func fieldCaption(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
             .textCase(.uppercase)
             .tracking(0.4)
             .foregroundStyle(.secondary)

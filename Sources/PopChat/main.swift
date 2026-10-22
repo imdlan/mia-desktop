@@ -2911,6 +2911,12 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                 updates: UpdateChecker(), tab: .about
             ))
             size = NSSize(width: 540, height: 620)
+        case "chat":
+            content = NSHostingView(rootView: SettingsView(
+                store: store, shortcutStore: ShortcutStore(), personaStore: PersonaStore(),
+                updates: UpdateChecker(), tab: .chat
+            ))
+            size = NSSize(width: 540, height: 620)
         case "thinking":
             // The waiting row mid-think, so the scrolling window and its expand
             // control can be eyeballed. Rendered directly — it is a plain view,
