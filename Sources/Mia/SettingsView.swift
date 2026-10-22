@@ -1390,8 +1390,10 @@ struct SettingsView: View {
                     .padding(.horizontal, 30)
             }
             VStack(spacing: 4) {
-                Text("Thanks to the original author, Le Chen.")
-                Text("Copyright © 2026 David · Version \(UpdateChecker.currentVersion)")
+                // Attribution is a courtesy AND the MIT obligation made visible:
+                // this app is a renamed continuation of someone else's project.
+                Link("Based on PopChat by Le Chen · MIT", destination: URL(string: "https://github.com/lec77/PopChat")!)
+                Text("Copyright © 2026 Le Chen & David · Version \(UpdateChecker.currentVersion)")
             }
             .font(.system(size: 10.5))
             .foregroundStyle(.secondary)

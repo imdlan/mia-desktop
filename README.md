@@ -103,8 +103,12 @@ A dozen more cover attachments, persistence, providers, prompt recall, cross-cha
 
 MIT — see [LICENSE](LICENSE).
 
+## Acknowledgments
+
+Mia is a renamed and continued fork of [PopChat](https://github.com/lec77/PopChat) by [Le Chen](https://github.com/lec77), used and re-released under the [MIT License](LICENSE). Many thanks for the original work.
+
 ## Status
 
-Version 0.1.8 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
+Version 0.2.0 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
 
 The direct ChatGPT-subscription path is unofficial and potentially risky; it is retained for existing users but may break or conflict with account/usage terms. The preferred alternative delegates to the user's own Codex installation through the experimental `codex app-server` protocol. That path requires the user to install, authenticate, and maintain Codex, and may need compatibility updates as the protocol evolves.
