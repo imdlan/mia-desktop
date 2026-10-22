@@ -100,3 +100,5 @@
 - 2026-10-22 P4 完成:`PersonaStore` + Custom 路径逐字节断言;`--smoke-persona` 10/10。**最终全量验收**(完整跑通一次,HEAD 基线对照):23 项 smoke 20 项 PASS(含 codex×4 与 `--smoke-file`,此前疑似悬挂系运行耗时超过守卫时限);3 项失败均为环境项——`--smoke-history` 屏幕几何断言在 HEAD 基线同样失败、`--smoke-search`/`--smoke-pasteable` 为本机 deepseek key 401;另 `--smoke-find` 偶发抖动重跑可过、`--smoke-firstrun` 基线即环境性失败。P1-P4 零回归。四阶段全部交付。
 - 2026-10-22 用户手动测试反馈①:Personas 名称输入框与编辑区视觉无区分 → designer 三轮修复(最终根因:grouped Form 在 AppKit 层重组自定义行;Chat 页改手搭卡片布局,`52f61d0`),observer 像素复核通过。
 - 2026-10-22 用户手动测试反馈②:Services 菜单路径太深 → P5 选区浮动按钮(需求当日补入本文档)。fixer 交付:手势检测/⌘C 取词还原/非激活浮动按钮/点击经 P2 通道或直接发送/Settings Selection 区块(双开关 + AX 权限状态行);`--smoke-selection` 24/24,回归通过。浮动按钮 GUI 行为与多屏锚定为手动验证项(清单在交付记录)。
+- 2026-10-22 Chat 页 UI 按用户反馈四轮迭代:①标签+盒式输入框(d0470a5);②NAME 同行+左对齐(根因:grouped Form 重组自定义行,Chat 页改手搭卡片布局,52f61d0);③控件右对齐+列表分割线(be116d2);④开关 mini 档+下拉内容宽(179376f)。observer 五轮像素复核全部通过。
+- 2026-10-22 P5 用户实测:选区按钮/授权/点击链路全通;AX 状态行因系统广播不触发而显示陈旧,补 didBecomeActive 刷新(e1127c4)。**P1-P5 全部交付、验收、经用户手动测试确认。** 已知运维项:ad-hoc 签名导致每次重建 TCC 授权失效,可选配固定签名证书根治。README 已补 P1-P5 功能说明。

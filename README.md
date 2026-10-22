@@ -22,6 +22,10 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 - **Search your chats** — ⌘Y searches what was actually said, not just chat titles, and shows the matching line.
 - **Large editor** (⌘E) — the input capsule morphs into a full draft editor; ⌘↩ sends.
 - **Liquid-glass look** on macOS 26 (translucent panel with an adjustable tint), a solid fallback below that, Light/Dark/Auto appearance, four accent presets plus a custom color picker, and full support for Reduce Motion / Reduce Transparency.
+- **Ask about any selection** — select text in any app and a small floating button appears below it; click to quote the selection into the panel (an "Ask PopChat About Selection" service is also available for keyboard-driven flows). Needs Accessibility access — grant it from Settings › Chat.
+- **Personas** — switch the system prompt between presets (Translate, Code Review, Writing, or your own) from Settings › Chat; Custom keeps the free-text prompt untouched.
+- **Auto-named chats** — after a reply lands, the current provider is asked once (≤24 tokens) for a short title. Toggle it in Settings › Chat.
+- **Export your chats** — right-click a chat in the ⌘Y history popover for Markdown or JSON, or Export All to a folder; a way out before the 50-chat storage cap prunes anything.
 
 ## Install
 
@@ -51,7 +55,7 @@ Open Settings from the menu bar icon or **⌘,** inside the panel.
 - **Providers** — pick a preset or add a custom OpenAI-compatible endpoint, paste an API key, and fetch the model list. **Add Provider…** also offers a *Free tiers* section (Groq, Google Gemini, Mistral, Cerebras, NVIDIA NIM, Cohere, Hugging Face) that fills in the right base URL and links where to get a key. ChatGPT-subscription access has two separate presets:
     - *OpenAI (Codex app-server)*: preferred. You must install and update Codex yourself, run `codex login` in Terminal, and ensure PopChat can find the `codex` executable (an explicit path field is available). PopChat only starts the local app-server; it does not install Codex or own/copy its login.
     - *OpenAI subscription (unofficial)*: the existing direct OAuth flow. It opens your browser and needs port 1455 during sign-in. Because it calls a backend not documented for third-party apps, it may break and may carry account or terms risk.
-- **Chat** — edit the system prompt, define slash commands, and choose the web-search engine (Tavily/Brave need keys, DuckDuckGo doesn't).
+- **Chat** — edit the system prompt, define slash commands, pick a persona, and choose the web-search engine (Tavily/Brave need keys, DuckDuckGo doesn't). The Selection section configures the floating selection button (enable, send-immediately, and the Accessibility status it depends on).
 - **Show & Hide** (Settings › General) — record whatever global shortcut you want (⌥Space by default); the menu bar menu shows the current one next to *Toggle PopChat*.
 
 PopChat checks GitHub Releases once a day and tells you in Settings › General (and in the menu bar icon's menu) when a newer version exists. It never downloads or installs anything — you update by opening the release page and dragging the new build to Applications, the same way you installed it. Turn the check off in Settings › General.
