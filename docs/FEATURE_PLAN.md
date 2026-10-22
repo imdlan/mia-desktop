@@ -102,3 +102,4 @@
 - 2026-10-22 用户手动测试反馈②:Services 菜单路径太深 → P5 选区浮动按钮(需求当日补入本文档)。fixer 交付:手势检测/⌘C 取词还原/非激活浮动按钮/点击经 P2 通道或直接发送/Settings Selection 区块(双开关 + AX 权限状态行);`--smoke-selection` 24/24,回归通过。浮动按钮 GUI 行为与多屏锚定为手动验证项(清单在交付记录)。
 - 2026-10-22 Chat 页 UI 按用户反馈四轮迭代:①标签+盒式输入框(d0470a5);②NAME 同行+左对齐(根因:grouped Form 重组自定义行,Chat 页改手搭卡片布局,52f61d0);③控件右对齐+列表分割线(be116d2);④开关 mini 档+下拉内容宽(179376f)。observer 五轮像素复核全部通过。
 - 2026-10-22 P5 用户实测:选区按钮/授权/点击链路全通;AX 状态行因系统广播不触发而显示陈旧,补 didBecomeActive 刷新(e1127c4)。**P1-P5 全部交付、验收、经用户手动测试确认。** 已知运维项:ad-hoc 签名导致每次重建 TCC 授权失效,可选配固定签名证书根治。README 已补 P1-P5 功能说明。
+- 2026-10-22 **品牌迁移 PopChat → Mia**:全量更名(bundle ID `app.tapfun.mia`、数据目录、热键名、originator `mia`、仓库 imdlan/mia-desktop);新增 `BrandMigration`(旧 defaults 域 + 热键键名 + 数据目录一次性迁移,`--smoke-migration` 8/8 隔离自测);新 logo(AppIcon.icns + 菜单栏 template 图标)、新截图、README 重整、旧仓库 imdlan/PopChat 归档;OpenAI preset 默认模型 gpt-4o→gpt-6-luna(2027-01-14 关闭,官方替代)。0.2.0 准备就绪,待公证凭据后发布。

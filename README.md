@@ -48,7 +48,7 @@ cd mia-desktop
 open dist/Mia.app
 ```
 
-`./build.sh debug` builds the debug configuration. The script wraps the SwiftPM binary in an app bundle and ad-hoc signs it by default — fine for a build you made yourself, and you can point `MIA_SIGN_IDENTITY` at your own certificate instead. `./release.sh` is the release path — it signs with a Developer ID, notarizes and staples both the app and the disk image; it needs your own Developer ID certificate plus a stored `notarytool` keychain profile (`MIA_SIGN_IDENTITY` / `MIA_NOTARY_PROFILE` to override the defaults).
+`./build.sh debug` builds the debug configuration. The script wraps the SwiftPM binary in an app bundle and ad-hoc signs it by default — fine for a build you made yourself, and you can point `MIA_SIGN_IDENTITY` at your own certificate instead. `./release.sh` is the release path — it signs with a Developer ID and notarizes with a locally stored `notarytool` keychain profile: put the profile name in `.notary-profile` (git-ignored) or pass `MIA_NOTARY_PROFILE`.
 
 There is no Xcode project — it's plain SwiftPM (`Package.swift`) plus `build.sh`.
 

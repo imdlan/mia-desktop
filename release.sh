@@ -14,7 +14,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 IDENTITY="${MIA_SIGN_IDENTITY:-Developer ID Application: Tapfun Information Technology Co., Ltd. (93AQJ9JK46)}"
-PROFILE="${MIA_NOTARY_PROFILE:-developer}"
+# Notary: the keychain profile name lives in .notary-profile (git-ignored —
+# profile naming is local machine trivia and does not belong in a public repo).
+# Create it with:  echo "<profile>" > .notary-profile
+PROFILE="${MIA_NOTARY_PROFILE:-$(cat .notary-profile 2>/dev/null)}"
 
 APP="dist/Mia.app"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
