@@ -911,6 +911,62 @@ if CommandLine.arguments.contains("--smoke-selection") {
     log.check("CRLF selections still quote as one line each",
           SelectionQuote.quote("a\r\nb") == "> a\r\n> b\n\n")
 
+    // P5 selection-button laws (pure): gesture thresholds, own-window
+    // suppression, anchor clamping, immediate-send decision.
+    let gesture = SelectionGesture.qualifies(down:up:clickCount:)
+    log.check("a short drag is not a selection",
+          !gesture(CGPoint(x: 100, y: 100), CGPoint(x: 105, y: 100), 1))
+    log.check("a drag qualifies exactly at the 12pt threshold",
+          gesture(CGPoint(x: 100, y: 100), CGPoint(x: 112, y: 100), 1))
+    log.check("just under the threshold does not",
+          !gesture(CGPoint(x: 100, y: 100), CGPoint(x: 111.9, y: 100), 1))
+    log.check("a vertical sweep qualifies",
+          gesture(CGPoint(x: 50, y: 50), CGPoint(x: 50, y: 90), 1))
+    log.check("a stationary double-click qualifies",
+          gesture(CGPoint(x: 10, y: 10), CGPoint(x: 10, y: 10), 2))
+    log.check("a triple-click qualifies",
+          gesture(CGPoint(x: 10, y: 10), CGPoint(x: 11, y: 10), 3))
+    log.check("a plain single click does not",
+          !gesture(CGPoint(x: 10, y: 10), CGPoint(x: 12, y: 10), 1))
+
+    let downEvent = NSEvent.mouseEvent(
+        with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0,
+        windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 0
+    )
+    let dragUpEvent = NSEvent.mouseEvent(
+        with: .leftMouseUp, location: NSPoint(x: 40, y: 10), modifierFlags: [], timestamp: 0,
+        windowNumber: 0, context: nil, eventNumber: 2, clickCount: 1, pressure: 0
+    )
+    if let downEvent, let dragUpEvent {
+        log.check("the event-typed wrapper sees the same drag",
+              SelectionGesture.qualifies(mouseDown: downEvent, mouseUp: dragUpEvent))
+    } else {
+        log.check("the event-typed wrapper sees the same drag", false, "NSEvent synthesis failed")
+    }
+
+    let ownFrames = [CGRect(x: 0, y: 0, width: 500, height: 400), CGRect(x: 800, y: 0, width: 200, height: 200)]
+    log.check("presses inside PopChat's own windows are suppressed",
+          SelectionGesture.isInside(point: CGPoint(x: 250, y: 200), frames: ownFrames)
+              && SelectionGesture.isInside(point: CGPoint(x: 900, y: 100), frames: ownFrames))
+    log.check("presses outside them are not",
+          !SelectionGesture.isInside(point: CGPoint(x: 600, y: 200), frames: ownFrames))
+
+    let screen = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    log.check("anchor sits below and left-aligned with the release point",
+          Anchor.clamp(point: CGPoint(x: 400, y: 500), in: screen) == CGPoint(x: 400, y: 484))
+    log.check("anchor clamps at the screen's left edge",
+          Anchor.clamp(point: CGPoint(x: -40, y: 500), in: screen).x == 0)
+    log.check("anchor clamps at the screen's right edge",
+          Anchor.clamp(point: CGPoint(x: 1000, y: 500), in: screen).x == 1000 - Anchor.buttonSize)
+    log.check("anchor clamps at the screen's bottom edge",
+          Anchor.clamp(point: CGPoint(x: 400, y: 0), in: screen).y == 0)
+
+    log.check("immediate send needs the switch AND real text",
+          SelectionGesture.shouldSendImmediately(enabled: true, text: "hello")
+              && !SelectionGesture.shouldSendImmediately(enabled: false, text: "hello")
+              && !SelectionGesture.shouldSendImmediately(enabled: true, text: "")
+              && !SelectionGesture.shouldSendImmediately(enabled: true, text: "  \n "))
+
     log.finish()
 }
 

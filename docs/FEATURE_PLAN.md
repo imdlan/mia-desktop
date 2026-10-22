@@ -57,7 +57,22 @@
 ### 验证(Owner: Orchestrator)
 - `--smoke-persona`:切换后 wire 上的 system prompt 正确;Custom 路径不受影响。
 
-## 任务拆解与进度
+## P5 选区浮动按钮(用户反馈升级 P2 体验)
+
+**背景**:Services 菜单路径过深(应用菜单 → Services),用户要求:后台运行时,任意 app 选中文字,选区尾端下方浮现按钮,点击即弹出面板进入对话。
+
+### 需求
+- R5.1 选区检测:全局鼠标监听(免权限)判定"选区手势"(拖拽 ≥12pt 或 双击/三击),满足后在鼠标抬起点(≈选区尾端)**下方**显示小型非激活浮动按钮面板;自动消失(6s 无交互或任意下次点击/滚轮/Esc)。
+- R5.2 取词:保存剪贴板(changeCount + items)→ 模拟 ⌘C → 轮询 changeCount(≤150ms)读取文本 → 还原剪贴板;需要辅助功能权限,未授权时 Settings 显示状态与授权入口(kAXTrustedCheckOptionPrompt 一次性引导)。
+- R5.3 点击行为:隐藏按钮 → `PanelController.show()`(复用 P2 非激活路径)→ 走 P2 的 `.popChatQuoteSelection` 通道预填引用块并聚焦;Settings 增加 "Send immediately"(默认关),开启则直接以引用块作为消息发送。
+- R5.4 Settings:Chat 页(或 General,由实现者按布局惯例定)增加 "Show selection button"(默认开,随权限状态展示)。
+- R5.5 抑制:事件点位于 PopChat 自身窗口(面板/按钮)内不触发;按钮已显示期间不重复触发;P2 Services 通道保留不动。
+- R5.6 已知边界(记录不修):纯键盘选区(Shift+方向键)不触发;取词效果依赖目标 app 对 ⌘C 的响应(文本可选即可,业界同款方案)。
+
+### 验证(Owner: Orchestrator)
+- 手势判定/锚点钳制/自动发送决策提取纯函数入 `--smoke-selection`(扩展);权限与浮动按钮 GUI 行为出手动清单,用户实测。
+
+
 
 | # | 任务 | 状态 |
 |---|---|---|
@@ -70,6 +85,9 @@
 | T3.2 | 设置开关 | ✅ 完成(`--smoke-titling` 22/22;默认开,object(forKey:) 模式) |
 | T4.1 | Persona 存储 CRUD | ✅ 完成 |
 | T4.2 | 切换 UI + 内置示例 | ✅ 完成(`--smoke-persona` 10/10;Custom 路径逐字节断言) |
+| T5.1 | 选区手势检测 + 浮动按钮面板 | ✅ 完成 |
+| T5.2 | ⌘C 取词 + 剪贴板还原 | ✅ 完成 |
+| T5.3 | 点击 → 面板/引用/直接发送 + Settings Selection 区块 | ✅ 完成(`--smoke-selection` 扩至 24 断言) |
 
 **进度反馈机制**:每阶段由实施方(fixer)交付 → Orchestrator 读 diff + 本地 build/smoke 验证 → 更新本表与进度日志 → 下一阶段派发。
 
@@ -80,3 +98,5 @@
 - 2026-10-21 P2 完成:Services 注册 + 非激活路径 handler + 追加式引用预填 + 一次性提示;`--smoke-selection` 9/9。`--smoke-firstrun` 失败经 HEAD 基线 worktree 判定为环境性既有失败,与改动无关。P3 派发。
 - 2026-10-21 P3 完成:`Titling` 纯函数层 + dispatch 即置位的仅一次守卫 + 旧 JSON 兼容;`--smoke-titling` 22/22。`--smoke-find` 为非确定抖动(同二进制连跑双态),非回归。P4 派发。
 - 2026-10-22 P4 完成:`PersonaStore` + Custom 路径逐字节断言;`--smoke-persona` 10/10。**最终全量验收**(完整跑通一次,HEAD 基线对照):23 项 smoke 20 项 PASS(含 codex×4 与 `--smoke-file`,此前疑似悬挂系运行耗时超过守卫时限);3 项失败均为环境项——`--smoke-history` 屏幕几何断言在 HEAD 基线同样失败、`--smoke-search`/`--smoke-pasteable` 为本机 deepseek key 401;另 `--smoke-find` 偶发抖动重跑可过、`--smoke-firstrun` 基线即环境性失败。P1-P4 零回归。四阶段全部交付。
+- 2026-10-22 用户手动测试反馈①:Personas 名称输入框与编辑区视觉无区分 → designer 三轮修复(最终根因:grouped Form 在 AppKit 层重组自定义行;Chat 页改手搭卡片布局,`52f61d0`),observer 像素复核通过。
+- 2026-10-22 用户手动测试反馈②:Services 菜单路径太深 → P5 选区浮动按钮(需求当日补入本文档)。fixer 交付:手势检测/⌘C 取词还原/非激活浮动按钮/点击经 P2 通道或直接发送/Settings Selection 区块(双开关 + AX 权限状态行);`--smoke-selection` 24/24,回归通过。浮动按钮 GUI 行为与多屏锚定为手动验证项(清单在交付记录)。

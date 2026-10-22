@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Settings reuses the same list the picker and ChatStore read.
     private let personaStore = PersonaStore()
     private let updateChecker = UpdateChecker()
+    /// P5 selection floating button — same lifetime as the status item; built
+    /// in didFinishLaunching because it needs the panel controller's show path.
+    private var selectionButton: SelectionButtonController?
     private lazy var panelController = PanelController(providerStore: providerStore, shortcutStore: shortcutStore)
     private var settingsWindow: NSWindow?
 
@@ -44,6 +47,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // macOS can offer the service as soon as the menu bar item exists;
         // NSApp retains the provider, and the delegate outlives the app.
         NSApp.servicesProvider = self
+
+        // P5 selection floating button: the click hands the captured text to
+        // the SAME places the P2 Services handler feeds — the nonactivating
+        // show path plus the quote channel — or sends it straight away when
+        // the user opted into that. A send that gets refused (mid-stream)
+        // falls back to the quote prefill so the text is never lost.
+        selectionButton = SelectionButtonController { [weak self] text in
+            guard let self else { return }
+            if !self.panelController.isPanelOnScreen {
+                self.panelController.show()
+            }
+            let quote = SelectionQuote.quote(text)
+            if SelectionGesture.shouldSendImmediately(
+                enabled: SelectionButtonController.sendImmediatelyEnabled, text: quote
+            ), self.panelController.chatStore.send(quote) {
+                return
+            }
+            NotificationCenter.default.post(name: .popChatQuoteSelection, object: quote)
+        }
+        selectionButton?.start()
 
         // "Dismiss PopChat" means all of it: a floating Settings window left
         // hovering over the app the user returned to reads as stuck. Only

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ApplicationServices
 import KeyboardShortcuts
 import ServiceManagement
 
@@ -46,6 +47,12 @@ struct SettingsView: View {
     /// ChatStore.autoTitleEnabled mirrors it with object(forKey:) for the same
     /// reason webSearchEnabled does — bool(forKey:) turns missing into false.
     @AppStorage("autoTitleEnabled") private var autoTitleEnabled = true
+    /// P5 selection button switches. The controller reads both through its own
+    /// object(forKey:) accessors — the AppStorage defaults keep the UI in step
+    /// without either side owning a Bool(forKey:) trap (both default correctly:
+    /// show = on, send = off).
+    @AppStorage("selectionButtonEnabled") private var selectionButtonEnabled = true
+    @AppStorage("selectionSendImmediately") private var selectionSendImmediately = false
     @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
     @AppStorage("customAccentColor") private var customAccentHex = ""
     @AppStorage("bubbleStyle") private var bubbleStyleRaw = BubbleStyle.accentTint.rawValue
@@ -72,6 +79,10 @@ struct SettingsView: View {
     @State private var chatGPTSignInGeneration = 0
     /// Custom provider awaiting delete confirmation (removal drops its API key).
     @State private var providerPendingDeletion: UUID?
+    /// P5: live Accessibility-trust state for the Selection section. Refreshed
+    /// on appear and on the system's AX notification, because granting in
+    /// System Settings happens in ANOTHER app — nothing local invalidates it.
+    @State private var axTrusted = AXIsProcessTrusted()
     /// The one provider row disclosed for editing (delta 5, 7b). Nothing here
     /// touches `store.selectedID` — Settings is a catalog, the panel's pill owns
     /// what is live.
@@ -1179,6 +1190,37 @@ struct SettingsView: View {
                     Toggle("Auto-name new chats", isOn: $autoTitleEnabled)
                         .toggleStyle(.switch)
                 }
+                chatSection("Selection",
+                            footer: "Select text in any app and a small PopChat button appears below it — click to quote the selection into the panel. Needs Accessibility access.",
+                            footerHelp: "The button borrows the clipboard for a momentary ⌘C in the source app and restores it. Keyboard-only selections are not detected; the Services menu (P2) covers those.") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Show selection button", isOn: $selectionButtonEnabled)
+                            .toggleStyle(.switch)
+                        Toggle("Send selection immediately", isOn: $selectionSendImmediately)
+                            .toggleStyle(.switch)
+                            .disabled(!selectionButtonEnabled)
+                        if axTrusted {
+                            Label("Accessibility access granted", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            HStack {
+                                Text("The selection button needs Accessibility access.")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Grant Access…") {
+                                    // Deep link into the Accessibility pane; the
+                                    // user drops PopChat onto the list themselves
+                                    // (that drag cannot be automated by design).
+                                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                        NSWorkspace.shared.open(url)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 chatSection("Web Search",
                             footer: "The model decides when to search (max 5 tool rounds).",
                             footerHelp: "web_search + fetch_url tools. Provider-native uses OpenRouter's server-side plugin and only applies when OpenRouter is the active provider; other choices fall back to DuckDuckGo with a visible notice.") {
@@ -1205,6 +1247,16 @@ struct SettingsView: View {
             .padding(.bottom, 20)
         }
         .background(formPageBackground)
+        .onAppear { axTrusted = AXIsProcessTrusted() }
+        // Granting or revoking happens in System Settings — another app — so
+        // nothing local invalidates our copy. This is the system's broadcast
+        // that trust changed, landing exactly while the user is looking at
+        // the row that reports it.
+        .onReceive(DistributedNotificationCenter.default().publisher(
+            for: Notification.Name("com.apple.accessibility.api")
+        )) { _ in
+            axTrusted = AXIsProcessTrusted()
+        }
     }
 
     /// One grouped-card section of the hand-built Chat page: header, card,
