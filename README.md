@@ -1,3 +1,5 @@
+<p align="center"><img src="Resources/logo.png" width="128" alt="Mia logo"></p>
+
 # Mia
 
 [![License: MIT](https://img.shields.io/github/license/imdlan/mia-desktop)](LICENSE)
