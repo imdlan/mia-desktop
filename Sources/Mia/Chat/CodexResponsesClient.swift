@@ -76,6 +76,7 @@ enum CodexResponsesClient {
         let sessionID = sessionID ?? UUID().uuidString.lowercased()
 
         var round = 0
+        var usage: TurnUsage?
         while true {
             let roundsExhausted = round >= maxToolRounds
             if roundsExhausted {
@@ -111,16 +112,19 @@ enum CodexResponsesClient {
 
             visible = outcome.visibleText
             reasoning = outcome.reasoningText
+            if let u = outcome.usage { usage = usage.map { $0 + u } ?? u }
 
             // A truncated response terminates the turn with a visible warning,
             // regardless of any partial tool calls it may have carried.
             if let reason = outcome.incompleteReason {
                 continuation.yield(.error(truncationMessage(reason: reason)))
+                if let usage { continuation.yield(.usage(usage)) }
                 continuation.yield(.done(visible))
                 return
             }
 
             guard let executor, !outcome.toolCalls.isEmpty, !roundsExhausted else {
+                if let usage { continuation.yield(.usage(usage)) }
                 continuation.yield(.done(visible))
                 return
             }
@@ -193,6 +197,8 @@ enum CodexResponsesClient {
         /// Set when the backend ended the response with `response.incomplete`
         /// (output-token limit, content filter, …) — the answer is truncated.
         var incompleteReason: String? = nil
+        /// Usage from `response.completed`, if the backend reported it.
+        var usage: TurnUsage? = nil
     }
 
     private static func streamOneRound(
@@ -358,7 +364,18 @@ enum CodexResponsesClient {
                 }
 
             case "response.completed", "response.done":
-                return RoundOutcome(visibleText: visible, reasoningText: reasoning, roundItems: roundItems, toolCalls: toolCalls)
+                // Responses API usage rides the completed response object:
+                // { input_tokens, output_tokens, total_tokens, ... }.
+                var usage: TurnUsage?
+                if let u = (event["response"] as? [String: Any])?["usage"] as? [String: Any] {
+                    let output = (u["output_tokens"] as? Int) ?? 0
+                    let total = (u["total_tokens"] as? Int)
+                        ?? (((u["input_tokens"] as? Int) ?? 0) + output)
+                    if total > 0 || output > 0 {
+                        usage = TurnUsage(total: total, output: output)
+                    }
+                }
+                return RoundOutcome(visibleText: visible, reasoningText: reasoning, roundItems: roundItems, toolCalls: toolCalls, usage: usage)
 
             case "response.incomplete":
                 // Truncated (output limit / content filter) — carry the reason out

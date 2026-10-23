@@ -857,12 +857,26 @@ private struct MessageRow: View, Equatable {
                             if rerunnable {
                                 rerunButtons
                             }
+                            // "62518 tokens · 5m 42s · 51.6 tok/s" — total
+                            // (incl. prompt) · network time · output rate.
+                            // Providers that report no usage leave the token
+                            // counts nil and only the duration renders.
+                            Spacer(minLength: 16)
+                            if let stats = message.stats {
+                                Text(stats.displayLine)
+                                    .font(.system(size: 10.5).monospacedDigit())
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .textSelection(.enabled)
+                                    .help("Total tokens (prompt included) · network time · output tokens per second")
+                            }
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .labelStyle(.titleAndIcon)
                         .opacity(showCaret ? 0 : 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

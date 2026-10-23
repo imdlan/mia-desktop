@@ -35,6 +35,10 @@ enum ChatStreamEvent {
     /// paints, and a collapsed disclosure paints none).
     case reasoning(String)
     case done(String)
+    /// API-reported token usage, yielded once just before `.done` on every
+    /// path that can obtain it. Absent when the provider doesn't report —
+    /// the store then persists duration alone.
+    case usage(TurnUsage)
     case error(String)
     /// An `.error` whose cause was attributed — via structured error fields
     /// only, never message prose — to a content part kind the request carried.
@@ -203,6 +207,10 @@ enum OpenAIChatClient {
         var messages = history
         var visible = ""
         var reasoning = ""
+        // Summed across every round of a tool loop — each round's request
+        // carries the whole conversation back, so the total reflects what the
+        // provider actually billed.
+        var usage: TurnUsage?
         var executor: WebToolExecutor?
         if case .localTools(let engine) = webAccess {
             executor = WebToolExecutor(engine: engine)
@@ -243,8 +251,10 @@ enum OpenAIChatClient {
 
             visible = outcome.visibleText
             reasoning = outcome.reasoningText
+            if let u = outcome.usage { usage = usage.map { $0 + u } ?? u }
 
             guard let executor, !outcome.toolCalls.isEmpty, !roundsExhausted else {
+                if let usage { continuation.yield(.usage(usage)) }
                 continuation.yield(.done(visible))
                 return
             }
@@ -279,6 +289,8 @@ enum OpenAIChatClient {
         /// round's instead of replacing it.
         var reasoningText: String
         var toolCalls: [WireToolCall]
+        /// Usage this round reported, if the server sent it.
+        var usage: TurnUsage?
     }
 
     private struct ClientError: Error {
@@ -336,6 +348,21 @@ enum OpenAIChatClient {
             }
         }
         let choices: [Choice]?
+        /// The terminal usage chunk: `choices` is EMPTY and only this is set
+        /// (`stream_options: {"include_usage": true}`). Decoded leniently —
+        /// some servers send it on the final content chunk instead.
+        struct Usage: Decodable {
+            let promptTokens: Int?
+            let completionTokens: Int?
+            let totalTokens: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case promptTokens = "prompt_tokens"
+                case completionTokens = "completion_tokens"
+                case totalTokens = "total_tokens"
+            }
+        }
+        let usage: Usage?
     }
 
     /// One SSE line's payload, already mapped off the wire's several spellings.
@@ -345,6 +372,9 @@ enum OpenAIChatClient {
         var toolCalls: [StreamChunk.Choice.Delta.ToolCallDelta] = []
         /// The terminal `data: [DONE]` sentinel.
         var isDone = false
+        /// Usage riding this chunk — either the dedicated terminal chunk
+        /// (choices empty) or piggybacked on the final content chunk.
+        var usage: TurnUsage?
     }
 
     /// SSE line → delta. Its own function so `--smoke-reasoning` can assert the
@@ -356,13 +386,25 @@ enum OpenAIChatClient {
         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
         if payload == "[DONE]" { return StreamDelta(isDone: true) }
         guard let data = payload.data(using: .utf8),
-              let chunk = try? JSONDecoder().decode(StreamChunk.self, from: data),
-              let choice = chunk.choices?.first else { return nil }
+              let chunk = try? JSONDecoder().decode(StreamChunk.self, from: data) else { return nil }
+        let usage = chunk.usage.map {
+            TurnUsage(
+                total: $0.totalTokens ?? (($0.promptTokens ?? 0) + ($0.completionTokens ?? 0)),
+                output: $0.completionTokens ?? 0
+            )
+        }
+        // The usage-only terminal chunk has NO choices; without this branch it
+        // would fall through the old `choices?.first` guard and be dropped.
+        if chunk.choices?.isEmpty ?? true {
+            return usage.map { StreamDelta(usage: $0) }
+        }
+        guard let choice = chunk.choices?.first else { return usage.map { StreamDelta(usage: $0) } }
         let reasoning = choice.delta?.reasoningContent?.value ?? choice.delta?.reasoning?.value
         return StreamDelta(
             content: choice.delta?.content,
             reasoning: (reasoning?.isEmpty ?? true) ? nil : reasoning,
-            toolCalls: choice.delta?.toolCalls ?? []
+            toolCalls: choice.delta?.toolCalls ?? [],
+            usage: usage
         )
     }
 
@@ -373,7 +415,8 @@ enum OpenAIChatClient {
         toolsDisabled: Bool,
         visiblePrefix: String,
         reasoningPrefix: String,
-        continuation: AsyncStream<ChatStreamEvent>.Continuation
+        continuation: AsyncStream<ChatStreamEvent>.Continuation,
+        includeUsage: Bool = true
     ) async throws -> RoundOutcome {
         guard var url = URL(string: config.baseURL) else {
             throw ClientError(message: "Invalid base URL: \(config.baseURL)")
@@ -387,6 +430,12 @@ enum OpenAIChatClient {
             "stream": true,
             "messages": try JSONSerialization.jsonObject(with: JSONEncoder().encode(messages)),
         ]
+        // Ask for the usage-bearing terminal chunk (choices empty, usage set).
+        // Well-behaved servers ignore it; the ones that 400 on it are retried
+        // once without it below.
+        if includeUsage {
+            body["stream_options"] = ["include_usage": true]
+        }
         switch webAccess {
         case .localTools where !toolsDisabled:
             body["tools"] = try JSONSerialization.jsonObject(with: Data(toolsJSON.utf8))
@@ -415,6 +464,17 @@ enum OpenAIChatClient {
                 errorBody += line
                 if errorBody.count > 2000 { break }
             }
+            // A server that rejects `stream_options` rejects the whole
+            // request — tokens matter less than answers, so drop the
+            // parameter and retry once rather than failing the turn.
+            if http.statusCode == 400, errorBody.contains("stream_options") {
+                return try await streamOneRound(
+                    messages: messages, config: config, webAccess: webAccess,
+                    toolsDisabled: toolsDisabled, visiblePrefix: visiblePrefix,
+                    reasoningPrefix: reasoningPrefix, continuation: continuation,
+                    includeUsage: false
+                )
+            }
             throw ClientError(
                 message: "HTTP \(http.statusCode) from \(url.host() ?? "?"): \(errorBody.isEmpty ? "no body" : errorBody)",
                 contentRejection: attributeContentRejection(
@@ -427,10 +487,13 @@ enum OpenAIChatClient {
         var roundText = ""
         var reasoning = reasoningPrefix
         var pendingCalls: [Int: (id: String, name: String, arguments: String)] = [:]
+        var usage: TurnUsage?
 
         for try await line in bytes.lines {
             guard let delta = decodeDelta(line: line) else { continue }
             if delta.isDone { break }
+
+            if let u = delta.usage { usage = u }
 
             if let piece = delta.content, !piece.isEmpty {
                 if roundText.isEmpty && !visible.isEmpty {
@@ -458,7 +521,7 @@ enum OpenAIChatClient {
         }
         return RoundOutcome(
             visibleText: visible, roundText: roundText,
-            reasoningText: reasoning, toolCalls: toolCalls
+            reasoningText: reasoning, toolCalls: toolCalls, usage: usage
         )
     }
 

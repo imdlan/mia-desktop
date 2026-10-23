@@ -55,6 +55,8 @@ if smokePlain || smokeSearch || smokePasteable {
             switch event {
             case .partial:
                 chunks += 1
+            case .usage:
+                break
             case .activity(let text):
                 print("[activity] \(text)")
             case .status(let text):
@@ -318,6 +320,7 @@ if CommandLine.arguments.contains("--smoke-codex-app-server-search") {
             ) {
                 switch event {
                 case .partial(let value), .done(let value): text = value
+                case .usage: break
                 case .activity(let value):
                     if value.contains("searched the web") {
                         searched = true
@@ -397,6 +400,8 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-str
                 if text.contains("half-answer") { sawAborted = true }
                 if text.contains("replacesC") { sawGlued = true }
                 final = text
+            case .usage:
+                break
             case .done(let text):
                 final = text
             case .status(let text):
@@ -556,6 +561,8 @@ if CommandLine.arguments.contains("--smoke-chatgpt") {
             switch event {
             case .partial:
                 chunks += 1
+            case .usage:
+                break
             case .activity(let text):
                 print("[activity] \(text)")
             case .status(let text):
@@ -1424,6 +1431,46 @@ if CommandLine.arguments.contains("--smoke-reasoning") {
     log.check("reasoning keeps every paragraph", reasoned.string.contains("Third thought"))
     let delta = abs(height(MarkdownRenderer.attributedProse(sample)) - height(reasoned))
     log.check("reasoning styling is metrics-neutral", delta < 0.5, "height delta=\(delta)")
+
+    log.finish()
+}
+
+// Turn-cost stats: the usage-bearing terminal chunk (choices empty) used to
+// fall through the `choices?.first` guard and vanish; the footer's token
+// counts and rate are only as real as this decoding.
+if CommandLine.arguments.contains("--smoke-usage") {
+    var log = CheckLog()
+    func line(_ json: String) -> String { "data: \(json)" }
+
+    let terminal = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[],"usage":{"prompt_tokens":45000,"completion_tokens":17518,"total_tokens":62518}}"#))
+    log.check("usage-only chunk decodes", terminal?.usage?.total == 62518 && terminal?.usage?.output == 17518,
+          "got=\(String(describing: terminal?.usage))")
+    log.check("usage-only chunk carries no content", terminal?.content == nil)
+
+    let piggyback = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"content":"tail"},"finish_reason":"stop"}],"# +
+        #""usage":{"prompt_tokens":10,"completion_tokens":5}}"#))
+    log.check("usage riding a content chunk decodes", piggyback?.content == "tail" && piggyback?.usage?.total == 15,
+          "got=\(String(describing: piggyback?.usage))")
+
+    log.check("missing usage leaves it nil", OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"content":"hi"}}]}"#))?.usage == nil)
+
+    // Additive across a tool loop's rounds; derived tok/s formatting.
+    log.check("usage adds across rounds",
+          (TurnUsage(total: 100, output: 20) + TurnUsage(total: 30, output: 5)) == TurnUsage(total: 130, output: 25))
+    log.check("stats line renders all three parts",
+          TurnStats(totalTokens: 62518, outputTokens: 17518, duration: 342).displayLine
+              == "62518 tokens · 5m 42s · 51.2 tok/s",
+          "got=\(TurnStats(totalTokens: 62518, outputTokens: 17518, duration: 342).displayLine)")
+    log.check("usage-less stats render duration only",
+          TurnStats(totalTokens: nil, outputTokens: nil, duration: 5.4).displayLine == "5.4s",
+          "got=\(TurnStats(totalTokens: nil, outputTokens: nil, duration: 5.4).displayLine)")
+    log.check("sub-second durations render as ms",
+          TurnStats(totalTokens: nil, outputTokens: nil, duration: 0.85).displayLine == "850ms",
+          "got=\(TurnStats(totalTokens: nil, outputTokens: nil, duration: 0.85).displayLine)")
+    log.check("duration formats minutes", TurnStats.durationText(342) == "5m 42s")
 
     log.finish()
 }

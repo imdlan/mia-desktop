@@ -23,6 +23,57 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     /// summary as if the model had said it would corrupt the next turn.
     /// Optional so conversations written before this existed still decode.
     var reasoning: String?
+    /// Measured cost of the turn that produced this reply, shown right-aligned
+    /// in the assistant footer. Optional both because it didn't always exist
+    /// (old transcripts decode fine) and because a provider that never reports
+    /// usage leaves the token counts nil — duration alone still shows.
+    var stats: TurnStats?
+}
+
+/// API-reported token usage for one turn. `total` includes the prompt (the
+/// cost-facing number); `output` drives tok/s. Additive across the rounds of
+/// a tool loop.
+struct TurnUsage: Equatable {
+    var total: Int
+    var output: Int
+
+    static func + (lhs: TurnUsage, rhs: TurnUsage) -> TurnUsage {
+        TurnUsage(total: lhs.total + rhs.total, output: lhs.output + rhs.output)
+    }
+}
+
+/// Persisted alongside its reply: "62518 tokens · 5m 42s · 51.6 tok/s".
+/// `totalTokens`/`outputTokens` are nil when the provider didn't report usage
+/// (duration alone still renders); `duration` is the NETWORK turn wall-clock —
+/// request dispatch to final byte, tool rounds included, typewriter excluded.
+struct TurnStats: Codable, Equatable {
+    var totalTokens: Int?
+    var outputTokens: Int?
+    var duration: TimeInterval
+
+    /// The footer line. Total tokens include the prompt (the cost-facing
+    /// number); the rate divides OUTPUT tokens by the network duration, so a
+    /// tool-heavy turn dilutes it — that is the stated simplicity, not a bug.
+    var displayLine: String {
+        var parts: [String] = []
+        if let total = totalTokens, total > 0 {
+            parts.append("\(total) tokens")
+        }
+        parts.append(Self.durationText(duration))
+        if let output = outputTokens, output > 0, duration > 0.05 {
+            parts.append(String(format: "%.1f tok/s", Double(output) / duration))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "5m 42s" / "9.4s" / "850ms" — sub-second turns are real (cached or tiny
+    /// replies) and "0s" would read as a bug.
+    static func durationText(_ seconds: TimeInterval) -> String {
+        if seconds < 1 { return String(format: "%.0fms", seconds * 1000) }
+        if seconds < 10 { return String(format: "%.1fs", seconds) }
+        if seconds < 60 { return String(format: "%.0fs", seconds) }
+        return String(format: "%dm %ds", Int(seconds) / 60, Int(seconds) % 60)
+    }
 }
 
 @MainActor
@@ -387,6 +438,12 @@ final class ChatStore: ObservableObject {
             var assistantIndex = messages.count - 1
             var reasoning = ""
             var reasoningShown = false
+            // Wall-clock of the NETWORK turn (request dispatch → final byte),
+            // measured from task start to the end of the stream loop — tool
+            // rounds included, the typewriter reveal excluded.
+            let turnStart = Date()
+            // Last usage report of the turn, if the provider sent one.
+            var usage: TurnUsage?
             // Last error text of the turn, if any — the stream tail turns it
             // into the failure notification (both .error and .contentRejected
             // append a visible error row, so both count as a dangling turn).
@@ -411,6 +468,8 @@ final class ChatStore: ObservableObject {
                     startDrain(messageID: assistantMessage.id, mode: typewriter)
                 case .status(let text):
                     pendingStatus = text
+                case .usage(let u):
+                    usage = u
                 case .reasoning(let text):
                     // The visible copy: a plain @Published string, NOT a write
                     // into `messages`. Publishing the array per chunk would
@@ -450,6 +509,7 @@ final class ChatStore: ObservableObject {
             }
             let finalText = streamTarget
             streamFinished = true
+            let turnDuration = Date().timeIntervalSince(turnStart)
             // Hand the composer back the moment the NETWORK turn ends. The
             // typewriter can still be revealing seconds of tail (typewriterStep
             // deliberately lags), and holding isStreaming across it left the send
@@ -493,6 +553,17 @@ final class ChatStore: ObservableObject {
                     // keeps the reasoning it had produced, and it picks up
                     // anything a tool loop thought after the first text.
                     if !reasoning.isEmpty { messages[index].reasoning = reasoning }
+                    // Token/duration footer for this reply. A stopped turn has
+                    // no meaningful total (usage may not have arrived), so it
+                    // stays unmeasured; usage-less providers still get the
+                    // duration.
+                    if !Task.isCancelled {
+                        messages[index].stats = TurnStats(
+                            totalTokens: usage?.total,
+                            outputTokens: usage?.output,
+                            duration: turnDuration
+                        )
+                    }
                 }
             }
             if stillOurs { streamingMessageID = nil }

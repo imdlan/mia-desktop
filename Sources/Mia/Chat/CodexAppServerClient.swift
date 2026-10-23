@@ -577,6 +577,20 @@ enum CodexAppServerClient {
                     }
                 case "turn/completed":
                     let turn = params["turn"]?.objectValue
+                    // Token usage rides the completed turn (schema: TokenUsage
+                    // with input/output/total token counts). Both the
+                    // camelCase the app-server sends and snake_case are read;
+                    // zero/absent usage yields nothing rather than a "0
+                    // tokens" row.
+                    if let usage = turn?["usage"]?.objectValue {
+                        let output = Int(usage["outputTokens"]?.intValue ?? usage["output_tokens"]?.intValue ?? 0)
+                        let input = Int(usage["inputTokens"]?.intValue ?? usage["input_tokens"]?.intValue ?? 0)
+                        let explicitTotal = Int(usage["totalTokens"]?.intValue ?? usage["total_tokens"]?.intValue ?? 0)
+                        let total = explicitTotal > 0 ? explicitTotal : input + output
+                        if total > 0 || output > 0 {
+                            continuation.yield(.usage(TurnUsage(total: total, output: output)))
+                        }
+                    }
                     let status = turn?["status"]?.stringValue ?? "failed"
                     if status == "completed" || status == "interrupted" {
                         continuation.yield(.done(items.snapshot))
