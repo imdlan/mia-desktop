@@ -103,3 +103,19 @@
 - 2026-10-22 Chat 页 UI 按用户反馈四轮迭代:①标签+盒式输入框(d0470a5);②NAME 同行+左对齐(根因:grouped Form 重组自定义行,Chat 页改手搭卡片布局,52f61d0);③控件右对齐+列表分割线(be116d2);④开关 mini 档+下拉内容宽(179376f)。observer 五轮像素复核全部通过。
 - 2026-10-22 P5 用户实测:选区按钮/授权/点击链路全通;AX 状态行因系统广播不触发而显示陈旧,补 didBecomeActive 刷新(e1127c4)。**P1-P5 全部交付、验收、经用户手动测试确认。** 已知运维项:ad-hoc 签名导致每次重建 TCC 授权失效,可选配固定签名证书根治。README 已补 P1-P5 功能说明。
 - 2026-10-22 **品牌迁移 PopChat → Mia**:全量更名(bundle ID `app.tapfun.mia`、数据目录、热键名、originator `mia`、仓库 imdlan/mia-desktop);新增 `BrandMigration`(旧 defaults 域 + 热键键名 + 数据目录一次性迁移,`--smoke-migration` 8/8 隔离自测);新 logo(AppIcon.icns + 菜单栏 template 图标)、新截图、README 重整、旧仓库 imdlan/PopChat 归档;OpenAI preset 默认模型 gpt-4o→gpt-6-luna(2027-01-14 关闭,官方替代)。0.2.0 准备就绪,待公证凭据后发布。
+
+## P6 对话结束后台通知(用户反馈)
+
+**背景**:面板失焦即整体隐藏(`AppDelegate.applicationDidResignActive` → `hide()`),回答完成时用户几乎必然在其他 App 中且无任何信号,只能反复手动唤起查看;长回答 + typewriter 滞后使等待常达数十秒。
+
+### 需求
+- R6.1 触发点在 `ChatStore` stream 收尾(`isStreaming = false` 处):成功完成/出错(`.error`、`.contentRejected`)/空回复均通知;手动 Stop(`Task.isCancelled`)静默——停止即用户在场;Mia 为前台 App 时不打扰。
+- R6.2 通知 = 系统横幅(点击 → `NSApp.activate` + `panelController.show()` 唤起面板)+ 系统音效(Pop/Basso);横幅 `content.sound = nil`,音效统一由 `NSSound` 播放,单一开关避免双重声音。
+- R6.3 Settings › General › Notifications:主开关(默认关)+ 音效子开关(默认开);开启主开关时才请求系统授权;授权被拒时音效兜底。
+- R6.4 新文件 `CompletionNotifier.swift`(`@MainActor` 单例 + `UNUserNotificationCenterDelegate`),`AppDelegate` 启动时接线。
+
+### 已知事项
+- 横幅是否弹出由 系统设置 › 通知 › Mia 的"通知样式"与专注模式决定:样式为"无"或专注模式开启时,通知静默进入通知中心(实测确认),音效不受影响。
+
+### 验证(Owner: Orchestrator)
+- `./build.sh` 编译零警告、bundle 冒烟通过;默认关闭确认(defaults 键缺失即 off);端到端横幅/音效/点击唤起真机手动验证。

@@ -27,6 +27,7 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 - **Ask about any selection** — select text in any app and a small floating button appears below it; click to quote the selection into the panel (an "Ask Mia About Selection" service is also available for keyboard-driven flows). Needs Accessibility access — grant it from Settings › Chat.
 - **Personas** — switch the system prompt between presets (Translate, Code Review, Writing, or your own) from Settings › Chat; Custom keeps the free-text prompt untouched.
 - **Auto-named chats** — after a reply lands, the current provider is asked once (≤24 tokens) for a short title. Toggle it in Settings › Chat.
+- **Background notifications** — the panel hides whenever you click away, so a reply finishing elsewhere would go unnoticed. Turn it on in Settings › General and a banner (plus optional sound) marks every turn that finishes or fails; click the banner to reopen the panel. Off by default.
 - **Export your chats** — right-click a chat in the ⌘Y history popover for Markdown or JSON, or Export All to a folder; a way out before the 50-chat storage cap prunes anything.
 
 ## Install
@@ -63,6 +64,7 @@ Open Settings from the menu bar icon or **⌘,** inside the panel.
     - *OpenAI subscription (unofficial)*: the existing direct OAuth flow. It opens your browser and needs port 1455 during sign-in. Because it calls a backend not documented for third-party apps, it may break and may carry account or terms risk.
 - **Chat** — edit the system prompt, define slash commands, pick a persona, and choose the web-search engine (Tavily/Brave need keys, DuckDuckGo doesn't). The Selection section configures the floating selection button (enable, send-immediately, and the Accessibility status it depends on).
 - **Show & Hide** (Settings › General) — record whatever global shortcut you want (⌥Space by default); the menu bar menu shows the current one next to *Toggle Mia*.
+- **Notifications** (Settings › General) — off by default. When on, a banner and an optional sound mark turns that finish (or fail) while Mia isn't frontmost; clicking the banner reopens the panel. If banners never appear, check that Mia's notification style in System Settings › Notifications is set to Banners or Alerts and no Focus mode is on — a silent delivery still lands in Notification Center, and the sound plays either way.
 
 Mia checks GitHub Releases once a day and tells you in Settings › General (and in the menu bar icon's menu) when a newer version exists. It never downloads or installs anything — you update by opening the release page and dragging the new build to Applications, the same way you installed it. Turn the check off in Settings › General.
 
