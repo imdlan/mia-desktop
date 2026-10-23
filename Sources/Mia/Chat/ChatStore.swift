@@ -23,6 +23,10 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     /// summary as if the model had said it would corrupt the next turn.
     /// Optional so conversations written before this existed still decode.
     var reasoning: String?
+    /// Wall-clock of when the message was SENT (user) or the turn's task
+    /// began (assistant). Optional — old transcripts decode as nil, and the
+    /// UI only renders the user bubble's stamp anyway.
+    var createdAt: Date?
     /// Measured cost of the turn that produced this reply, shown right-aligned
     /// in the assistant footer. Optional both because it didn't always exist
     /// (old transcripts decode fine) and because a provider that never reports
@@ -314,7 +318,7 @@ final class ChatStore: ObservableObject {
             let name = String(body.prefix { !$0.isWhitespace })
             let input = String(body.dropFirst(name.count)).trimmingCharacters(in: .whitespaces)
             guard let shortcut = shortcutStore.match(name: name) else {
-                messages.append(ChatMessage(role: .user, text: text))
+                messages.append(ChatMessage(role: .user, text: text, createdAt: Date()))
                 messages.append(ChatMessage(
                     role: .error,
                     text: "Unknown shortcut “/\(name)”. Define it in Settings → Slash Commands, or escape the leading slash."
@@ -325,7 +329,7 @@ final class ChatStore: ObservableObject {
             wireText = shortcut.expand(input: input)
         }
 
-        messages.append(ChatMessage(role: .user, text: text, wireText: wireText, attachments: attachments))
+        messages.append(ChatMessage(role: .user, text: text, wireText: wireText, attachments: attachments, createdAt: Date()))
 
         // Explicit-warning policy: catch misconfiguration up front, with a pointer to
         // the fix, rather than surfacing an opaque HTTP failure.
@@ -408,7 +412,7 @@ final class ChatStore: ObservableObject {
         }
 
         persist()
-        let assistantMessage = ChatMessage(role: .assistant, text: "")
+        let assistantMessage = ChatMessage(role: .assistant, text: "", createdAt: Date())
         messages.append(assistantMessage)
         isStreaming = true
         pendingStatus = nil

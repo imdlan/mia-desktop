@@ -752,6 +752,18 @@ private struct MessageRow: View, Equatable {
     @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
     @Environment(\.colorScheme) private var scheme
     @State private var copied = false
+    /// Reveals the user bubble's timestamp while the pointer is over it —
+    /// transient UI state, deliberately outside the Equatable gate.
+    @State private var hovered = false
+
+    /// "2026-10-23 13:03:42" — fixed POSIX-pinned format: a logged timestamp
+    /// must never re-spell itself with the device locale.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
 
     /// Single-text-view rows (user bubble, activity, error) render one string,
     /// so the message's occurrence numbering IS the view's.
@@ -802,11 +814,33 @@ private struct MessageRow: View, Equatable {
                     .padding(.horizontal, 14)
                     .background(
                         Theme.bubbleFill(style: style, accentHex: accentHex, dark: scheme == .dark),
-                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        // Square top-trailing corner: the bubble "speaks" from
+                        // the right edge, chat-app style, against the trailing
+                        // alignment.
+                        in: UnevenRoundedRectangle(
+                            cornerRadii: RectangleCornerRadii(
+                                topLeading: 18, bottomLeading: 18, bottomTrailing: 18, topTrailing: 0
+                            ),
+                            style: .continuous
+                        )
                     )
                     .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
+                    .onHover { hovered = $0 }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                // The question's timestamp: hidden until the pointer rests on
+                // the bubble, then a small right-aligned line under it. The
+                // assistant rows carry no stamp — one side timestamps each
+                // exchange, and the reply visibly follows its question.
+                if let createdAt = message.createdAt {
+                    Text(Self.timestampFormatter.string(from: createdAt))
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .opacity(hovered ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.15), value: hovered)
+                }
                 // Only when this bubble is the last thing in the transcript, i.e.
                 // the reply came back empty and left nothing else to hang them on.
                 if rerunnable { rerunRow() }
