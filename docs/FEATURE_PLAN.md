@@ -119,3 +119,28 @@
 
 ### 验证(Owner: Orchestrator)
 - `./build.sh` 编译零警告、bundle 冒烟通过;默认关闭确认(defaults 键缺失即 off);端到端横幅/音效/点击唤起真机手动验证。
+
+## P7 回答 footer 统计(用户需求)
+
+**背景**:三条 provider 路径的 usage 此前全部被丢弃——OpenAI-compatible 的 usage 终末 chunk 在 `choices?.first` 守卫处静默消失;Codex `turn/completed` 与 ChatGPT `response.completed` 的 usage 字段从未解析。UI 对"这轮回答花了多少资源"零反馈。
+
+### 需求
+- R7.1 `ChatStreamEvent` 新增 `.usage(TurnUsage)`,三路径在终态前 yield;工具循环多轮累加。
+- R7.2 OpenAI-compatible:请求体加 `stream_options.include_usage`;解析 choices 为空的 usage chunk 与搭车在内容 chunk 上的 usage;该参数被 400 拒绝时自动去参重试一次。
+- R7.3 `TurnStats { totalTokens, outputTokens, duration }` 挂 `ChatMessage`(optional,随对话 iso8601 持久化,旧记录 nil)。
+- R7.4 assistant footer 右侧(行动按钮对侧)显示 "62518 tokens · 5m 42s · 51.2 tok/s":total 含 prompt(成本口径),tok/s 用 output ÷ 网络时长(含工具回合,已知稀释,声明为口径而非缺陷);无 usage 仅显示耗时;手动 Stop(Task cancelled)不统计;默认显示无开关。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-usage`:usage-only chunk / 搭车 chunk / 缺失 nil / 多轮累加 / 三段与降级格式化,9 项断言;真机核对与 provider 后台一致性留待人工。
+
+## P8 用户气泡时间戳 + 直角造型(用户需求)
+
+**背景**:对话流无任何时间信息,长对话回看无法定位时序。
+
+### 需求
+- R8.1 `ChatMessage.createdAt`(optional,iso8601 持久化):send 各路径记录用户消息发送时刻,assistant 记录回合开始。
+- R8.2 用户气泡下方 hover 显示 "2026-10-23 13:03:42"(POSIX 固定格式防本地化漂移,右对齐 10pt tertiary,0.15s 淡入);assistant 行不显示——单侧时间戳即可推断每轮时序。
+- R8.3 气泡右上角直角(`UnevenRoundedRectangle`),对齐右侧发言方向。
+
+### 验证(Owner: Orchestrator)
+- 构建零 error、bundle 冒烟通过;hover/造型为视觉验收,人工确认。
