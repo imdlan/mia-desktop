@@ -387,6 +387,10 @@ final class ChatStore: ObservableObject {
             var assistantIndex = messages.count - 1
             var reasoning = ""
             var reasoningShown = false
+            // Last error text of the turn, if any — the stream tail turns it
+            // into the failure notification (both .error and .contentRejected
+            // append a visible error row, so both count as a dangling turn).
+            var failure: String?
             for await event in stream {
                 switch event {
                 case .partial(let text), .done(let text):
@@ -420,6 +424,7 @@ final class ChatStore: ObservableObject {
                     messages.insert(ChatMessage(role: .activity, text: text), at: assistantIndex)
                     assistantIndex += 1
                 case .error(let message):
+                    failure = message
                     let row = ChatMessage(role: .error, text: message)
                     messages.append(row)
                     // The rejection wasn't attributable, but the request carried
@@ -431,6 +436,7 @@ final class ChatStore: ObservableObject {
                         )
                     }
                 case .contentRejected(let capability, let message):
+                    failure = message
                     providerStore.recordCapabilityException(
                         capability, supported: false, source: .learned,
                         providerID: sendProviderID, model: config.model
@@ -452,6 +458,21 @@ final class ChatStore: ObservableObject {
             isStreaming = false
             pendingStatus = nil
             pendingReasoning = nil
+            // Pull the user back if they left during the turn (the panel hides
+            // on every deactivation, so "away" is the common case). A
+            // cancelled task is a stop — the user is already here, so it
+            // stays silent. An error row or an empty reply is a dangling
+            // question, not a finished one; the notifier itself stays quiet
+            // while Mia is the active app.
+            if !Task.isCancelled {
+                if let failure {
+                    CompletionNotifier.shared.turnFailed(failure)
+                } else if finalText.isEmpty {
+                    CompletionNotifier.shared.turnFailed("")
+                } else {
+                    CompletionNotifier.shared.turnFinished()
+                }
+            }
             await drainTask?.value
             // "Still ours": flushTypewriter() clears streamingMessageID when a new
             // turn takes over mid-reveal, so this must not clobber its bookkeeping.

@@ -61,6 +61,8 @@ struct SettingsView: View {
     @AppStorage("panelTint") private var panelTint = -1.0
     @AppStorage("appearance") private var appearanceRaw = AppearanceChoice.auto.rawValue
     @AppStorage(UpdateChecker.automaticChecksKey) private var automaticUpdateChecks = true
+    @AppStorage(CompletionNotifier.enabledKey) private var notifyOnCompletion = false
+    @AppStorage(CompletionNotifier.soundKey) private var notifyCompletionSound = true
     @AppStorage(CodexAppServerClient.executablePathKey) private var codexExecutablePath = ""
     @FocusState private var focusedCommandName: UUID?
     @Environment(\.colorScheme) private var scheme
@@ -212,6 +214,21 @@ struct SettingsView: View {
                 sectionHeader("Show & Hide")
             } footer: {
                 sectionFooter("If ⌥Space is taken by another app, unbind it there or record a different shortcut.")
+            }
+            Section {
+                Toggle("Notify when replies finish", isOn: $notifyOnCompletion)
+                    .onChange(of: notifyOnCompletion) { _, enabled in
+                        // The toggle turning on is the one moment the system's
+                        // authorization prompt is welcome; denial falls back to
+                        // the sound alone.
+                        if enabled { CompletionNotifier.shared.requestAuthorization() }
+                    }
+                Toggle("Play a sound", isOn: $notifyCompletionSound)
+                    .disabled(!notifyOnCompletion)
+            } header: {
+                sectionHeader("Notifications")
+            } footer: {
+                sectionFooter("The panel hides whenever you click away, so a reply finishing elsewhere would go unnoticed. When on, a banner and a sound mark turns that finish (or fail) while Mia isn't frontmost — click the banner to reopen the panel. If notifications are denied in System Settings, the sound still plays. Off by default.")
             }
         }
     }

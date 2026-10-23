@@ -51,6 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panelController.toggle()
         }
 
+        // Turn-end notifications: clicking a banner reopens the panel, and
+        // the notifier posts only when Mia isn't the active app (active means
+        // the user is watching the panel already).
+        CompletionNotifier.shared.configure { [weak self] in
+            self?.panelController.show()
+        }
+
         // P2 "ask about selection": the Services item declared in Info.plist
         // (NSServices → NSMessage) is delivered here. Registered at launch so
         // macOS can offer the service as soon as the menu bar item exists;
