@@ -140,7 +140,21 @@
 ### 需求
 - R8.1 `ChatMessage.createdAt`(optional,iso8601 持久化):send 各路径记录用户消息发送时刻,assistant 记录回合开始。
 - R8.2 用户气泡下方 hover 显示 "2026-10-23 13:03:42"(POSIX 固定格式防本地化漂移,右对齐 10pt tertiary,0.15s 淡入);assistant 行不显示——单侧时间戳即可推断每轮时序。
-- R8.3 气泡右上角直角(`UnevenRoundedRectangle`),对齐右侧发言方向。
+- R8.3 气泡直角(`UnevenRoundedRectangle`),对齐右侧发言方向;0.4.0 起依用户反馈改为**右下角**直角(原右上角)。
 
 ### 验证(Owner: Orchestrator)
 - 构建零 error、bundle 冒烟通过;hover/造型为视觉验收,人工确认。
+
+## P9 模型选择弹窗过滤搜索(用户需求)
+
+**背景**:部分 provider 模型目录极大(OpenRouter 300+),滚动肉眼定位困难;且渲染上限 200 行,目录后半的模型此前根本不可见。
+
+### 需求
+- R9.1 模型列列表上方加过滤输入框(复用 HistoryPopover 的 `KeyRoutingTextField`:打开即聚焦、IME 组合安全);列头显示 `Provider · N of M models` 命中反馈。
+- R9.2 模糊匹配:大小写 + 分隔符(`-._/:` 与空白)不敏感、多词无序——"gpt 4o"、"4o mini"、"gpt-4o" 均命中 `gpt-4o-mini-2024…`。
+- R9.3 过滤作用于全量目录后再套 renderCap(第 200 行之后的模型可搜到);弹窗高度按未过滤全量计算,输入中外壳尺寸不变(5c 纪律)。
+- R9.4 键盘:↑/↓ 移动光标、↩ 提交、⎋ 先清空过滤再关弹窗;`KeyCaptureView` 不再自动抢第一响应者(避免与输入框竞争),Tab 仍可达保留 ←/→ 列浏览。
+- R9.5 附带(用户反馈):用户气泡直角由右上角改为右下角(修订 P8/R8.3)。
+
+### 验证(Owner: Orchestrator)
+- `swift build` 零 error;`./build.sh` bundle 冒烟 6/6 PASS;过滤/键盘/⎋ 行为与大目录 provider 经用户真机手动测试通过。
