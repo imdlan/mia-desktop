@@ -814,12 +814,12 @@ private struct MessageRow: View, Equatable {
                     .padding(.horizontal, 14)
                     .background(
                         Theme.bubbleFill(style: style, accentHex: accentHex, dark: scheme == .dark),
-                        // Square top-trailing corner: the bubble "speaks" from
-                        // the right edge, chat-app style, against the trailing
-                        // alignment.
+                        // Square bottom-trailing corner: the bubble "speaks"
+                        // downward from the trailing edge, chat-app style,
+                        // against the trailing alignment.
                         in: UnevenRoundedRectangle(
                             cornerRadii: RectangleCornerRadii(
-                                topLeading: 18, bottomLeading: 18, bottomTrailing: 18, topTrailing: 0
+                                topLeading: 18, bottomLeading: 18, bottomTrailing: 0, topTrailing: 18
                             ),
                             style: .continuous
                         )

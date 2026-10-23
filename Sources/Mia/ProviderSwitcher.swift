@@ -27,6 +27,12 @@ struct ProviderSwitcher: View {
     @State private var modelIndex = 0
     @State private var effortIndex = 0
     @State private var hoveredRow: String?
+    /// Type-to-filter for the models column: empty shows the full catalog.
+    @State private var modelQuery = ""
+    /// Bumped on every presentation so the filter field re-claims focus even
+    /// when SwiftUI reused this view's identity (a re-presented popover keeps
+    /// its state — see `onAppear`).
+    @State private var searchFocusBump = 0
     @State private var appeared = false
     @State private var isClosing = false
 
@@ -57,6 +63,7 @@ struct ProviderSwitcher: View {
         static let railWidth: CGFloat = 150
         static let row: CGFloat = 25
         static let header: CGFloat = 21
+        static let search: CGFloat = 20
         static let inset: CGFloat = 6
         static let maxBody: CGFloat = 320
         /// Long catalogs (OpenRouter ships 300+) scroll rather than grow.
@@ -66,8 +73,31 @@ struct ProviderSwitcher: View {
     private var accent: Color { Theme.color(accentHex) }
     private var rail: [Provider] { store.configuredProviders }
     private var previewProvider: Provider? { store.providers.first { $0.id == previewID } }
+    /// The previewed provider's FULL catalog — filtering runs over all of it,
+    /// not just the rendered prefix, so a hit past row 200 is still findable
+    /// (long catalogs were exactly why the filter exists).
+    private var allModels: [String] { store.knownModels[previewID] ?? [] }
+    /// What the list renders: query-filtered, then capped.
     private var models: [String] {
-        Array((store.knownModels[previewID] ?? []).prefix(Metrics.renderCap))
+        Array(filteredModels.prefix(Metrics.renderCap))
+    }
+    private var filteredModels: [String] {
+        let query = modelQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return allModels }
+        return allModels.filter { matchesQuery($0, query: query) }
+    }
+    /// Separator-insensitive, order-free matching: model IDs are punctuation
+    /// soup (`gpt-4o-mini`, `claude.sonnet.4`), so both sides fold away
+    /// `-._/:` and whitespace, and each space-separated token must appear —
+    /// "gpt 4o", "4o mini" and "gpt-4o" all find `gpt-4o-mini-2024…`.
+    private func matchesQuery(_ model: String, query: String) -> Bool {
+        func fold(_ string: String) -> String {
+            string.lowercased().filter { !$0.isWhitespace && !"-. /:".contains($0) }
+        }
+        let target = fold(model)
+        return query.split(whereSeparator: \.isWhitespace).allSatisfy { token in
+            target.contains(fold(String(token)))
+        }
     }
     private var previewModel: String {
         models.indices.contains(modelIndex) ? models[modelIndex] : store.rememberedModel(previewID)
@@ -112,6 +142,8 @@ struct ProviderSwitcher: View {
             // state would otherwise open on whatever was last previewed, and ↩
             // would commit a provider the user never browsed to in this session.
             previewID = store.selectedID
+            modelQuery = ""
+            searchFocusBump += 1
             syncModelIndex()
             syncEffortIndex()
             store.lazyFetchModels(for: store.selectedID)
@@ -121,6 +153,11 @@ struct ProviderSwitcher: View {
             store.lazyFetchModels(for: id)
             syncModelIndex()
             syncEffortIndex()
+        }
+        .onChange(of: modelQuery) { _, _ in
+            // Typing aims the keyboard at the model list; the cursor re-syncs
+            // through the `models` change this causes (below).
+            column = .models
         }
         .onChange(of: models) { _, _ in
             syncModelIndex()
@@ -199,6 +236,7 @@ struct ProviderSwitcher: View {
     private var modelColumn: some View {
         VStack(alignment: .leading, spacing: 1) {
             columnHeader(modelHeaderTitle)
+            modelSearchRow
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     if store.isFetching(previewID) {
@@ -224,7 +262,7 @@ struct ProviderSwitcher: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                     } else if models.isEmpty, !store.isFetching(previewID) {
-                        Text("No models fetched yet")
+                        Text(allModels.isEmpty ? "No models fetched yet" : "No models match")
                             .font(.system(size: 11.5))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 8)
@@ -304,10 +342,60 @@ struct ProviderSwitcher: View {
         }
     }
 
+    /// Type-to-filter above the model list (HistoryPopover's pattern): the
+    /// field owns focus from open, so a few keystrokes land the model, while
+    /// ↑/↓/↩/⎋ keep driving the list through KeyRoutingTextField's routing.
+    private var modelSearchRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            KeyRoutingTextField(
+                text: $modelQuery,
+                placeholder: "Filter models…",
+                focusBump: searchFocusBump,
+                onMoveUp: {
+                    column = .models
+                    move(-1)
+                    return true
+                },
+                onMoveDown: {
+                    column = .models
+                    move(1)
+                    return true
+                },
+                onReturn: { _ in
+                    if column == .models, models.indices.contains(modelIndex) {
+                        commitModel(models[modelIndex])
+                    } else {
+                        commitProvider(previewID)
+                    }
+                    return true
+                },
+                onEscape: {
+                    // First ⎋ clears the filter, second closes — a dud query
+                    // shouldn't cost the whole popover.
+                    if !modelQuery.isEmpty {
+                        modelQuery = ""
+                        return true
+                    }
+                    close()
+                    return true
+                }
+            )
+            .frame(height: 16)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: Metrics.search, alignment: .leading)
+    }
+
     private var modelHeaderTitle: String {
         let name = previewProvider?.name ?? "Models"
-        let count = store.knownModels[previewID]?.count ?? 0
-        return count > 0 ? "\(name) · \(count) models" : name
+        let count = allModels.count
+        guard count > 0 else { return name }
+        let query = modelQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty ? "\(name) · \(count) models"
+            : "\(name) · \(models.count) of \(count)"
     }
 
     // MARK: - Reasoning effort
@@ -453,8 +541,11 @@ struct ProviderSwitcher: View {
     /// fixed-height by construction, so this can't drift (5c).
     private var bodyHeight: CGFloat {
         let railContent = Metrics.header + CGFloat(rail.count + 1) * (Metrics.row + 1)
-        let modelRows = max(models.count, 1) + 1 // + the refresh row
-        let modelContent = Metrics.header + CGFloat(modelRows) * (Metrics.row + 1)
+        // The FULL catalog, not the filtered list: typing must filter inside a
+        // shell that never re-sizes — the height is fixed before presentation (5c).
+        let modelRows = max(allModels.count, 1) + 1 // + the refresh row
+        let modelContent = Metrics.header + Metrics.search + 1
+            + CGFloat(modelRows) * (Metrics.row + 1)
         let effortRows = efforts.isEmpty ? 0 : efforts.count + 1 // + model hint
         let effortContent = Metrics.header + CGFloat(effortRows) * (Metrics.row + 1)
         let tallest = max(max(railContent, modelContent), effortContent) + Metrics.inset * 2
@@ -573,12 +664,13 @@ struct ProviderSwitcher: View {
 
 // MARK: - Key capture
 
-/// Invisible first responder for arrow/return/escape inside the switcher popover.
+/// Fallback arrow/return/escape handler inside the switcher popover.
 ///
-/// Not `.onKeyPress`: that needs SwiftUI focus, which nothing in this popover
-/// otherwise wants (there is no text field here, unlike the history popover's
-/// filter). A plain NSView that accepts first responder is both smaller and
-/// certain to see the arrows before any control does.
+/// The models filter (KeyRoutingTextField) owns the keyboard from open — it
+/// routes ↑/↓/↩/⎋ itself, and ←/→ stay caret keys while it is focused. This
+/// view no longer claims first responder on appear (it used to race the
+/// filter for it); Tab can still land here, keeping ←/→ column browsing
+/// keyboard-reachable when the filter is not focused.
 private struct KeyCaptureView: NSViewRepresentable {
     enum Key { case up, down, left, right, `return`, escape }
 
@@ -596,18 +688,8 @@ private struct KeyCaptureView: NSViewRepresentable {
 
     private final class CaptureView: NSView {
         var onKey: ((Key) -> Bool)?
-        private var claimed = false
 
         override var acceptsFirstResponder: Bool { true }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let window, !claimed else { return }
-            claimed = true
-            // Never synchronously from inside AppKit's subtree walk (see
-            // AutoFocusingTextField in SearchField.swift for the crash this avoids).
-            RunLoop.main.perform(inModes: [.common]) { window.makeFirstResponder(self) }
-        }
 
         override func keyDown(with event: NSEvent) {
             let key: Key?
