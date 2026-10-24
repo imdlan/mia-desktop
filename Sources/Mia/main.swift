@@ -3561,6 +3561,20 @@ if CommandLine.arguments.contains("--smoke-providers") {
             return found
         }
 
+        /// The filter field above the model list (7c): it, not the background
+        /// capture view, owns focus from open — the assertion at step 2 checks
+        /// THIS field's editor, while `send` below still drives the capture view
+        /// directly (arrows ←/→ are only routed there).
+        func filterField() -> NSTextField? {
+            var found: NSTextField?
+            func walk(_ view: NSView) {
+                if let field = view as? NSTextField, field.placeholderString == "Filter models…" { found = field }
+                for sub in view.subviews where found == nil { walk(sub) }
+            }
+            walk(window.contentView ?? NSView())
+            return found
+        }
+
         func send(_ keyCode: UInt16, _ label: String) {
             guard let view = captureView() else { fail("switcher key capture view vanished") }
             guard let event = NSEvent.keyEvent(
@@ -3579,9 +3593,11 @@ if CommandLine.arguments.contains("--smoke-providers") {
                 case 1:
                     return // let the popover body appear and claim first responder
                 case 2:
-                    guard let view = captureView() else { fail("switcher did not install its key capture view") }
-                    guard window.firstResponder === view else {
-                        fail("switcher key capture view did not take first responder")
+                    guard captureView() != nil else { fail("switcher did not install its key capture view") }
+                    guard let field = filterField(),
+                          let editor = field.currentEditor(),
+                          window.firstResponder === editor else {
+                        fail("switcher filter field did not take first responder")
                     }
                     send(125, "↓")             // rail: Harness A → Harness B
                     if store.selectedID != alpha.id {
