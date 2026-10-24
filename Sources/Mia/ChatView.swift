@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension Notification.Name {
     static let miaOpenSettings = Notification.Name("MiaOpenSettings")
@@ -356,6 +357,7 @@ struct ChatView: View {
                                 waitingReasoning: waitingReasoning,
                                 capabilityAction: capabilityAction,
                                 onFork: { store.fork(at: id) },
+                                onExport: { exportReply(id) },
                                 onRetry: { store.retryLastTurn() },
                                 onEditPrompt: editLastPrompt,
                                 fullText: { store.fullText(of: id) },
@@ -382,6 +384,15 @@ struct ChatView: View {
             )
             .onPreferenceChange(TranscriptWidthKey.self) { transcriptWidth = $0 }
             .mask(topFade)
+            // Thinking-phase follow: the text/count onChanges below can't see
+            // the waiting indicator's height jumps (text stays "", count stays
+            // put) nor the send-moment compact→full container animation.
+            .followingWaitingGrowth(
+                proxy,
+                pinned: $pinnedToBottom,
+                pendingStatus: store.pendingStatus,
+                pendingReasoning: store.pendingReasoning
+            )
             .overlay(alignment: .top) {
                 VStack(spacing: 0) {
                     pillsRow
@@ -475,6 +486,34 @@ struct ChatView: View {
         guard let taken = store.takeLastUserMessageForEditing() else { return }
         composerModel.pendingAttachments = taken.attachments
         composerModel.injectedDraft = taken.text
+    }
+
+    /// One assistant reply to a Markdown file the user names (HistoryPopover's
+    /// `export` flow). Text resolves at click time — same semantics as Copy:
+    /// the typewriter may still be revealing the row, but the export promises
+    /// the whole response. Silent on success AND failure: ChatView has no
+    /// export-note surface, and a missing file is its own feedback.
+    private func exportReply(_ id: UUID) {
+        guard let message = store.messages.first(where: { $0.id == id }),
+              message.role == .assistant else { return }
+        // The stored file carries the auto title; before the first persist
+        // (mid-turn export) fall back to the same derivation persist() uses.
+        let title = ConversationStore.load(id: store.conversationID)?.title
+            ?? ChatStore.title(for: store.messages)
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = ConversationExport.replyFilenameBase(
+            conversationTitle: title, messageID: id
+        ) + ".md"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? Data(
+            ConversationExport.replyMarkdown(
+                text: store.fullText(of: id),
+                reasoning: message.reasoning,
+                conversationTitle: title
+            ).utf8
+        ).write(to: url, options: [.atomic])
     }
 
     // MARK: - Find in chat (⌘F)
@@ -681,6 +720,57 @@ struct ChatView: View {
     }
 }
 
+/// Layout identity for the growth-following scroll: heights only, rounded so
+/// sub-pixel layout jitter never spins the action.
+private struct GrowthPin: Equatable {
+    var contentHeight: CGFloat
+    var containerHeight: CGFloat
+}
+
+private extension View {
+    /// Keeps the transcript pinned through layout GROWTH that the text/count
+    /// onChanges cannot see: while the reply is still empty, its text stays ""
+    /// and the row count stays put, yet the waiting indicator's height jumps
+    /// (status line → 3-line reasoning window → timer) and the send-moment
+    /// compact→full panel animation re-sizes the container mid-scrollTo.
+    ///
+    /// Iron rule: this follow-scroll must NEVER be animated — every streaming
+    /// tick would restart the animation and layout would never go idle (this
+    /// froze the app; see the text onChange in transcriptZone). Scrolling
+    /// itself changes neither content nor container size, so this fires on
+    /// layout growth only and never yanks an upward read: `pinned` gates it.
+    @ViewBuilder
+    func followingWaitingGrowth(
+        _ proxy: ScrollViewProxy,
+        pinned: Binding<Bool>,
+        pendingStatus: String?,
+        pendingReasoning: String?
+    ) -> some View {
+        if #available(macOS 15.0, *) {
+            onScrollGeometryChange(for: GrowthPin.self, of: { geometry in
+                GrowthPin(
+                    contentHeight: geometry.contentSize.height.rounded(),
+                    containerHeight: geometry.containerSize.height.rounded()
+                )
+            }, action: { _, _ in
+                if pinned.wrappedValue {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            })
+        } else {
+            // macOS 14: no geometry hook; the indicator's driving @Published
+            // values stand in for its height changes (this branch always
+            // follows anyway — trackingBottomPin pins nothing below 15).
+            onChange(of: pendingStatus) { _, _ in
+                if pinned.wrappedValue { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .onChange(of: pendingReasoning) { _, _ in
+                if pinned.wrappedValue { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+        }
+    }
+}
+
 private struct ContentHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -738,6 +828,8 @@ private struct MessageRow: View, Equatable {
     var capabilityAction: CapabilityAction?
     /// Ignored by ==: it captures only stable references (store + message id).
     var onFork: () -> Void = {}
+    /// Likewise ignored by == (same shape as `onFork`).
+    var onExport: () -> Void = {}
     /// Likewise ignored by ==.
     var onRetry: () -> Void = {}
     var onEditPrompt: () -> Void = {}
@@ -888,6 +980,12 @@ private struct MessageRow: View, Equatable {
                                     .contentShape(Rectangle())
                             }
                             .help("Start a new conversation from this point")
+                            Button(action: onExport) {
+                                Label("Export", systemImage: "square.and.arrow.up")
+                                    .padding(.vertical, 2)
+                                    .contentShape(Rectangle())
+                            }
+                            .help("Export this reply as Markdown…")
                             if rerunnable {
                                 rerunButtons
                             }
@@ -920,6 +1018,7 @@ private struct MessageRow: View, Equatable {
                         NSPasteboard.general.setString(fullText(), forType: .string)
                     }
                     Button("Fork Here", action: onFork)
+                    Button("Export Reply…", action: onExport)
                     if rerunnable {
                         Divider()
                         Button("Retry", action: onRetry)

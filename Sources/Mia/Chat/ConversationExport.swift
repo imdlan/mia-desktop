@@ -17,6 +17,17 @@ enum ConversationExport {
         return formatter
     }()
 
+    /// Reasoning renders behind a collapsed disclosure in the app; a
+    /// blockquote keeps it visually secondary in the file too. Shared by the
+    /// conversation and single-reply exports so the shape cannot drift.
+    private static func reasoningBlock(_ reasoning: String) -> String {
+        let quoted = reasoning
+            .components(separatedBy: "\n")
+            .map { $0.isEmpty ? ">" : "> \($0)" }
+            .joined(separator: "\n")
+        return "> *Reasoning:*\n\(quoted)"
+    }
+
     /// Title header, export stamp, then one block per message separated by
     /// blank lines. Message bodies are the stored markdown, verbatim — fenced
     /// code blocks survive because nothing here reflows them.
@@ -30,14 +41,8 @@ enum ConversationExport {
                 blocks.append("**You:**\n\n\(message.text)")
             case .assistant:
                 var block = "**Assistant:**"
-                // Reasoning renders behind a collapsed disclosure in the app;
-                // a blockquote keeps it visually secondary in the file too.
                 if let reasoning = message.reasoning, !reasoning.isEmpty {
-                    let quoted = reasoning
-                        .components(separatedBy: "\n")
-                        .map { $0.isEmpty ? ">" : "> \($0)" }
-                        .joined(separator: "\n")
-                    block += "\n\n> *Reasoning:*\n\(quoted)"
+                    block += "\n\n" + reasoningBlock(reasoning)
                 }
                 block += "\n\n\(message.text)"
                 blocks.append(block)
@@ -49,6 +54,24 @@ enum ConversationExport {
         return header + "\n\n" + blocks.joined(separator: "\n\n") + "\n"
     }
 
+    /// One assistant reply, standalone: the conversation export's header shape
+    /// and reasoning blockquote, then the reply verbatim — for the footer
+    /// Export action, which points at a single message, not a whole chat.
+    static func replyMarkdown(
+        text: String,
+        reasoning: String?,
+        conversationTitle: String,
+        exportedAt: Date = Date()
+    ) -> String {
+        let header = "# Reply — \(conversationTitle)\n*Exported from Mia · "
+            + stampFormatter.string(from: exportedAt) + "*"
+        var body = ""
+        if let reasoning, !reasoning.isEmpty {
+            body = reasoningBlock(reasoning) + "\n\n"
+        }
+        return header + "\n\n" + body + text + "\n"
+    }
+
     /// The store's own on-disk encoding (JSONEncoder + iso8601), so a resolved
     /// export is byte-compatible with a stored conversation file and can be
     /// dropped back in as a backup.
@@ -58,14 +81,29 @@ enum ConversationExport {
         return try encoder.encode(conversation)
     }
 
+    /// `<title slug>`: lowercased, non-alphanumerics → dashes, collapsed to
+    /// single dashes. Shared by the conversation and reply file-name bases.
+    private static func slug(_ title: String) -> String {
+        let dashed = String(title.lowercased().map { ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        return dashed.split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
+    }
+
     /// Default file-name base: `<title slug>-<first 6 of the id>`. Readable
     /// AND unique — an export folder full of same-titled chats (and the forks
     /// sharing a prefix) must never overwrite each other.
     static func filenameBase(for conversation: Conversation) -> String {
-        let dashed = String(conversation.title.lowercased().map { ($0.isLetter || $0.isNumber) ? $0 : "-" })
-        let collapsed = dashed.split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
-        return (collapsed.isEmpty ? "conversation" : collapsed)
+        let base = slug(conversation.title)
+        return (base.isEmpty ? "conversation" : base)
             + "-" + String(conversation.id.uuidString.prefix(6))
+    }
+
+    /// Reply file-name base: `<title slug>-reply-<first 6 of the message id>`,
+    /// the same readable-AND-unique contract; "reply" when the title slugs
+    /// away to nothing.
+    static func replyFilenameBase(conversationTitle: String, messageID: UUID) -> String {
+        let base = slug(conversationTitle)
+        return (base.isEmpty ? "reply" : base + "-reply")
+            + "-" + String(messageID.uuidString.prefix(6))
     }
 
     /// The Export All payload: one `<slug>.md` per conversation plus a merged
