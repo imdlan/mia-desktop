@@ -641,6 +641,11 @@ if CommandLine.arguments.contains("--smoke-rerun") {
         // error row follows. That is enough to prove a retry RE-SENT — and it
         // keeps the harness off the network.
         let store = ChatStore(providerStore: ProviderStore(), shortcutStore: ShortcutStore())
+        // Snapshot BEFORE anything can record into it: send() below (and any
+        // future harness step) writes "first question" into the live domain,
+        // and a snapshot taken after would restore the leak permanently — the
+        // domain accumulated one copy per run.
+        let savedHistory = PromptHistory.entries
         store.send("first question")
         let afterFirst = store.messages.map(\.role)
         log.check("send appends the turn", afterFirst.first == .user && store.messages.count >= 2,
@@ -682,7 +687,6 @@ if CommandLine.arguments.contains("--smoke-rerun") {
         log.check("edit on an empty transcript is a no-op", store.takeLastUserMessageForEditing() == nil)
 
         // ↑ recall's storage: newest first, deduplicated, capped.
-        let savedHistory = PromptHistory.entries
         UserDefaults.standard.removeObject(forKey: "promptHistory")
         PromptHistory.record("one")
         PromptHistory.record("two")
@@ -1734,10 +1738,16 @@ func installBenchmarkConversation(minLength: Int) -> URL {
 
 /// Conversation for the ⌘F harness: long enough to scroll, with the needle in
 /// three widely separated messages so stepping matches must move the scroller.
-func installFindConversation() -> URL {
+func installFindConversation(age: TimeInterval = 0) -> URL {
     let scratch = FileManager.default.temporaryDirectory
         .appendingPathComponent("mia-find-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     ConversationStore.overrideDirectory = scratch
+    // `age` sinks this fixture's updatedAt below anything the caller saves
+    // afterwards (--smoke-history's two chats): listRecent sorts by decoded
+    // updatedAt with an UNSTABLE sort, so same-instant fixtures order
+    // arbitrarily per run — and the harness's ↑↓+↩ then lands on an
+    // unpredictable row. Aged deterministically, row order is stable.
+    let stamped = Date().addingTimeInterval(-age)
     let filler = String(repeating: "Filler prose that exists purely to make the transcript tall. ", count: 30)
     var messages: [ChatMessage] = []
     for index in 0..<9 {
@@ -1754,7 +1764,7 @@ func installFindConversation() -> URL {
     ConversationStore.save(Conversation(
         id: UUID(),
         title: "find harness",
-        updatedAt: Date(),
+        updatedAt: stamped,
         messages: messages
     ))
     return scratch
@@ -2396,10 +2406,13 @@ if CommandLine.arguments.contains("--smoke-input") {
 // focus, and that ↓/↩ select and open a chat (the popover tears down).
 if CommandLine.arguments.contains("--smoke-history") {
     MainActor.assumeIsolated {
-        let scratch = installFindConversation()
-        for title in ["alpha chat", "beta chat"] {
+        let scratch = installFindConversation(age: 30)
+        // Staggered updatedAt, newest last: [beta, alpha, find harness] in
+        // listRecent, matching the file-mtime order too — no ties anywhere, so
+        // both the popover's row order and init's resume pick are deterministic.
+        for (title, age) in [("alpha chat", 20.0), ("beta chat", 10.0)] {
             ConversationStore.save(Conversation(
-                id: UUID(), title: title, updatedAt: Date(),
+                id: UUID(), title: title, updatedAt: Date().addingTimeInterval(-age),
                 messages: [ChatMessage(role: .user, text: title)]
             ))
         }
@@ -2409,6 +2422,8 @@ if CommandLine.arguments.contains("--smoke-history") {
         let shortcutStore = ShortcutStore()
         let controller = PanelController(providerStore: providerStore, shortcutStore: shortcutStore)
         controller.show()
+        // What the panel resumed with — the swap assertion below must see this CHANGE.
+        let initialConversationID = controller.chatStore.conversationID
 
         func filterField() -> NSTextField? {
             var found: NSTextField?
@@ -2456,14 +2471,30 @@ if CommandLine.arguments.contains("--smoke-history") {
                     editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
                     editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
                     step = 6
-                case 6...7:
-                    if filterField() != nil {
-                        if step == 7 { fail("↩ did not open the selected chat / dismiss the popover") }
-                        return
+                case 6...9:
+                    // The FUNCTIONAL assertion: ↩ must open the SELECTED chat —
+                    // one moveDown from the preselected first row lands on
+                    // "alpha chat", which is NOT the conversation the panel
+                    // resumed with ("beta chat"), so this can only pass if the
+                    // popover really swapped the store over. Window-visibility
+                    // of the popover is NOT asserted: on macOS 26 a dismissed
+                    // _NSPopoverWindow stays isVisible=true in a never-activated
+                    // CLI process (SwiftUI has already torn the presentation
+                    // down — a second ⌘Y opens a fresh popover — but the window
+                    // is never ordered out), so visibility can't distinguish
+                    // closed from open here. The real app's activated lifecycle
+                    // doesn't linger.
+                    let store = controller.chatStore
+                    if store.conversationID != initialConversationID,
+                       store.messages.map(\.text) == ["alpha chat"] {
+                        print("PASS")
+                        try? FileManager.default.removeItem(at: scratch)
+                        exit(0)
                     }
-                    print("PASS")
-                    try? FileManager.default.removeItem(at: scratch)
-                    exit(0)
+                    if step == 9 {
+                        fail("↩ did not open the selected chat — current=\(store.conversationID) initial=\(initialConversationID) texts=\(store.messages.map(\.text))")
+                    }
+                    return
                 default:
                     fail("harness ran past its steps")
                 }
