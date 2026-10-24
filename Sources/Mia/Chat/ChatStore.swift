@@ -94,6 +94,22 @@ final class ChatStore: ObservableObject {
     /// empty-row-only, cleared on first text / turn end / stop); the durable
     /// copy is committed to `ChatMessage.reasoning` separately.
     @Published private(set) var pendingReasoning: String?
+    /// A follow-up queued while a reply streams ("steering"). `pending` is the
+    /// chip above the composer — replaceable, discardable; `inserted` has been
+    /// committed into the transcript mid-stream (below the streaming row) and
+    /// is answered automatically when the turn truly ends. The UI routes Enter
+    /// between queue and insert; the state machine itself deliberately does
+    /// NOT gate on isStreaming so the smoke harness can drive it offline.
+    enum SteerState {
+        case pending(text: String, attachments: [Attachment])
+        case inserted(text: String, wireText: String?, attachments: [Attachment])
+    }
+    @Published private(set) var steer: SteerState?
+    /// The chip shows only a queued-but-not-yet-inserted follow-up.
+    var steerPendingText: String? {
+        if case .pending(let text, _) = steer { return text }
+        return nil
+    }
     @Published private(set) var recent: [ConversationMeta] = []
     private(set) var conversationID = UUID()
 
@@ -235,6 +251,7 @@ final class ChatStore: ObservableObject {
         // when it reacts (PanelController's growth curve, ChatView's reveal).
         restoredIntoEmptyPanel = messages.isEmpty
         restoreTick += 1
+        steer = nil // loading another conversation must not answer its follow-up
         conversationID = loaded.conversation.id
         messages = loaded.messages
         if loaded.missingParent {
@@ -310,7 +327,20 @@ final class ChatStore: ObservableObject {
         // A previous reply may still be typing itself out; complete it instantly
         // rather than letting the new turn's rows appear above a half-revealed one.
         flushTypewriter()
+        guard case .ok = preflight(text, attachments: attachments) else { return false }
+        return performTurn()
+    }
 
+    /// The shared head of every send path: slash expansion, the user row, and
+    /// the explicit misconfiguration checks. `.ok` carries the wire text (nil
+    /// for a plain prompt); on `.rejected` the user row and the error row
+    /// naming the fix are ALREADY appended and persisted, so callers just stop.
+    private enum PreflightResult {
+        case ok(wireText: String?)
+        case rejected
+    }
+
+    private func preflight(_ text: String, attachments: [Attachment]) -> PreflightResult {
         // Slash-command expansion: display stays compact, the template goes on the wire.
         var wireText: String?
         if text.hasPrefix("/") {
@@ -324,7 +354,7 @@ final class ChatStore: ObservableObject {
                     text: "Unknown shortcut “/\(name)”. Define it in Settings → Slash Commands, or escape the leading slash."
                 ))
                 persist()
-                return false
+                return .rejected
             }
             wireText = shortcut.expand(input: input)
         }
@@ -336,7 +366,7 @@ final class ChatStore: ObservableObject {
         guard let config = providerStore.currentConfig() else {
             messages.append(ChatMessage(role: .error, text: "No provider selected — open Settings…"))
             persist()
-            return false
+            return .rejected
         }
         let providerName = providerStore.selectedProvider?.name ?? "provider"
         if config.model.isEmpty {
@@ -345,7 +375,7 @@ final class ChatStore: ObservableObject {
                 text: "No model set for \(providerName). Pick one from the model menu (fetch the list first) or Settings."
             ))
             persist()
-            return false
+            return .rejected
         }
         switch config.kind {
         case .chatGPT:
@@ -355,7 +385,7 @@ final class ChatStore: ObservableObject {
                     text: "Not signed in to ChatGPT. Right-click the menu bar icon → Settings… → Providers → Sign in with ChatGPT."
                 ))
                 persist()
-                return false
+                return .rejected
             }
         case .codexAppServer:
             // No pre-flight here on purpose. CodexAppServerClient resolves the
@@ -373,8 +403,24 @@ final class ChatStore: ObservableObject {
                     text: "No API key for \(providerName). Add one in Settings → Providers (right-click the menu bar icon), or pick a configured provider from the model pill above."
                 ))
                 persist()
-                return false
+                return .rejected
             }
+        }
+        return .ok(wireText: wireText)
+    }
+
+    /// Everything past the preflight: wire history, the empty assistant row,
+    /// and the stream task. Split from send() so a committed steer — whose
+    /// user row is already in the transcript — starts its answer through the
+    /// same code. Callers arrive pre-validated; re-resolving the config here is
+    /// idempotent (nothing MainActor-side can change it in between), and keeps
+    /// this entry point honest on its own.
+    @discardableResult
+    private func performTurn() -> Bool {
+        guard let config = providerStore.currentConfig() else {
+            messages.append(ChatMessage(role: .error, text: "No provider selected — open Settings…"))
+            persist()
+            return false
         }
 
         // Codex owns its own tool loop, so Mia's client-side tools can't be
@@ -575,9 +621,82 @@ final class ChatStore: ObservableObject {
             // The turn produced a real answer: this is the one moment a
             // default-titled conversation becomes worth naming (P3).
             maybeAutoTitle(producedAnswer: !finalText.isEmpty)
+            // Steer: the committed follow-up fires at the TRUE end of the turn —
+            // Stop included, since the question is already in the transcript.
+            if case .inserted = steer { _ = autoAnswerPendingSteer() }
         }
         // The turn actually started — the composer clears its draft/attachments.
         return true
+    }
+
+    // MARK: - Steering a streaming reply
+
+    /// Parks a follow-up as the chip above the composer. Does NOT gate on
+    /// isStreaming (the UI routes Enter; the harness drives this directly) and
+    /// does NOT record into PromptHistory — only a follow-up that reaches the
+    /// transcript is a sent prompt, so a discarded chip never reaches ↑
+    /// recall. A second queue REPLACES the chip; an already-inserted follow-up
+    /// doesn't block a new chip (it binds to the next turn's end).
+    @discardableResult
+    func queueSteer(_ text: String, attachments: [Attachment] = []) -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !attachments.isEmpty else { return false }
+        steer = .pending(text: text, attachments: attachments)
+        return true
+    }
+
+    /// ✕ on the chip. An `inserted` follow-up cannot be recalled — it is
+    /// already part of the transcript.
+    func discardSteer() {
+        if case .pending = steer { steer = nil }
+    }
+
+    /// ↑ on the chip: mid-stream the question is committed under the streaming
+    /// row and answered when the turn truly ends; once idle it is simply a
+    /// send. Either way the chip is consumed — its text now lives in the
+    /// transcript's user row, success or error row.
+    func insertSteer() {
+        guard case .pending = steer else { return }
+        if isStreaming {
+            _ = commitSteerInsert()
+        } else if case .pending(let text, let attachments) = steer {
+            steer = nil
+            _ = send(text, attachments: attachments)
+        }
+    }
+
+    /// The streaming half of insertSteer(), split out so `--smoke-steer` can
+    /// drive it offline. The shared preflight appends the question (and, on
+    /// failure, the error row naming the fix — then nothing is left to answer);
+    /// success leaves the question UNDER the streaming row and arms the
+    /// auto-answer at the turn's end.
+    @discardableResult
+    internal func commitSteerInsert() -> Bool {
+        guard case .pending(let text, let attachments) = steer else { return false }
+        guard case .ok(let wireText) = preflight(text, attachments: attachments) else {
+            steer = nil
+            return false
+        }
+        // The one record for this path: the question just became part of the
+        // conversation (queueSteer stayed silent on purpose).
+        PromptHistory.record(text)
+        // streamTask bookkeeping is index-captured at the stream's start
+        // (activity rows insert ABOVE the streaming row), so appending below
+        // it cannot disturb the live turn.
+        steer = .inserted(text: text, wireText: wireText, attachments: attachments)
+        persist()
+        return true
+    }
+
+    /// The streamTask tail's last step: the turn is truly over, so the
+    /// committed follow-up gets its answer. Clearing BEFORE performTurn()
+    /// prevents reentry — the new turn's own tail would otherwise find it
+    /// again.
+    @discardableResult
+    internal func autoAnswerPendingSteer() -> Bool {
+        guard case .inserted = steer else { return false }
+        steer = nil
+        return performTurn()
     }
 
     /// Writes a turn's thinking onto its assistant row, by id — a new turn can
@@ -891,6 +1010,10 @@ final class ChatStore: ObservableObject {
     /// only), so the shared prefix is never duplicated on disk.
     func fork(at messageID: UUID) {
         guard !isStreaming else { return }
+        // A committed follow-up must not fire its auto-answer into the branch:
+        // the still-running tail reads `steer` asynchronously, so clearing it
+        // here makes that read a no-op.
+        steer = nil
         guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
         // A reply can still be typing itself out here (isStreaming tracks the
         // network turn, not the reveal). Complete it FIRST: the persist() below
@@ -920,6 +1043,9 @@ final class ChatStore: ObservableObject {
     /// conversation already exists (Fork).
     private var lastUserIndex: Int? {
         guard !isStreaming else { return nil }
+        // An inserted follow-up is armed for an automatic answer at the turn's
+        // end; truncating for Retry/Edit now would race that answer.
+        if case .inserted = steer { return nil }
         return messages.lastIndex { $0.role == .user }
     }
 
@@ -991,6 +1117,9 @@ final class ChatStore: ObservableObject {
         recent = ConversationStore.listRecent()
         if id == conversationID {
             stop()
+            // The tail of the stopped turn reads `steer` asynchronously — a
+            // committed follow-up must not fire into the reset conversation.
+            steer = nil
             conversationID = UUID()
             messages.removeAll()
             forkParentID = nil
@@ -1008,6 +1137,10 @@ final class ChatStore: ObservableObject {
 
     func newChat() {
         stop()
+        // Same reason as fork(at:): the stopped turn's tail reads `steer`
+        // asynchronously, so a queued follow-up must not fire into the fresh
+        // conversation.
+        steer = nil
         persist()
         conversationID = UUID()
         messages.removeAll()

@@ -701,6 +701,139 @@ if CommandLine.arguments.contains("--smoke-rerun") {
     }
 }
 
+// Steering a streaming reply (no network, no UI): the chip's
+// queue/replace/discard lifecycle, the idle insert (a plain send), and the
+// streaming insert + auto-answer pair — driven directly against the state
+// machine, which is why the steer API doesn't gate on isStreaming.
+if CommandLine.arguments.contains("--smoke-steer") {
+    MainActor.assumeIsolated {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mia-steer-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        ConversationStore.overrideDirectory = scratch
+
+        // Both halves build ProviderStores, and a ProviderStore persists itself
+        // into this binary's defaults domain on construction/assignment —
+        // including the dead provider below, which would poison every later
+        // harness run's "no provider configured" assumption. Snapshot the
+        // domain and restore it before finish() exits.
+        let touchedKeys = [
+            "providersJSON", "selectedProviderID", "knownModelsJSON", "selectedModelsJSON",
+            "knownModelEffortsJSON", "defaultModelEffortsJSON", "selectedModelEffortsJSON",
+            "modelCapabilitiesJSON", "capabilityExceptionsJSON", "pdfPassThroughJSON", "promptHistory",
+        ]
+        let savedDefaults = touchedKeys.map { UserDefaults.standard.object(forKey: $0) }
+        func restoreDefaults() {
+            for (key, value) in zip(touchedKeys, savedDefaults) {
+                if let value { UserDefaults.standard.set(value, forKey: key) }
+                else { UserDefaults.standard.removeObject(forKey: key) }
+            }
+        }
+        // The recall assertions below need an exact baseline; whatever earlier
+        // harness runs left in the domain is snapshotted and restored, not kept.
+        UserDefaults.standard.removeObject(forKey: "promptHistory")
+
+        var log = CheckLog()
+
+        // Idle insert is a plain send. The provider is a deliberately keyless
+        // REMOTE one, so preflight fails deterministically ("No API key…")
+        // regardless of this machine's ambient sign-in state — user row first,
+        // error row after, and no request leaves the process.
+        let keylessStore = ProviderStore()
+        let keyless = Provider(
+            id: UUID(), name: "Steer keyless", baseURL: "https://example.invalid/v1",
+            isPreset: false, defaultModel: "smoke-model"
+        )
+        keylessStore.providers = [keyless]
+        keylessStore.selectedID = keyless.id
+        let store = ChatStore(providerStore: keylessStore, shortcutStore: ShortcutStore())
+
+        // The chip is one replaceable slot.
+        log.check("queue parks a pending chip",
+              store.queueSteer("first") && store.steerPendingText == "first",
+              "pending=\(String(describing: store.steerPendingText))")
+        log.check("a second queue replaces the chip",
+              store.queueSteer("second") && store.steerPendingText == "second",
+              "pending=\(String(describing: store.steerPendingText))")
+        store.discardSteer()
+        log.check("discard clears the chip", store.steer == nil)
+        log.check("blank queue is refused", !store.queueSteer("   "))
+        log.check("queueing never touches ↑ recall", PromptHistory.entries.isEmpty,
+              "entries=\(PromptHistory.entries)")
+
+        _ = store.queueSteer("idle question")
+        store.insertSteer()
+        log.check("idle insert asks its question",
+              store.messages.first?.role == .user && store.messages.first?.text == "idle question",
+              "roles=\(store.messages.map(\.role))")
+        log.check("idle insert shows the explicit error", store.messages.last?.role == .error,
+              "roles=\(store.messages.map(\.role))")
+        log.check("idle insert consumes the chip", store.steer == nil)
+        log.check("idle insert records ↑ recall exactly once",
+              PromptHistory.entries.filter { $0 == "idle question" }.count == 1,
+              "entries=\(PromptHistory.entries)")
+
+        // The streaming branch, offline: port 9 (discard) refuses connections on
+        // the loopback, so turns start but never reach a server. Its own scratch
+        // directory too — ChatStore resumes the newest stored conversation, and
+        // part one just persisted one. The harness never awaits between the
+        // synchronous steps, so the failing tails can't interleave before the
+        // settling wait below.
+        let streamScratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mia-steer-stream-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        ConversationStore.overrideDirectory = streamScratch
+        let providerStore = ProviderStore()
+        let dead = Provider(
+            id: UUID(), name: "Steer harness", baseURL: "http://127.0.0.1:9/v1",
+            isPreset: false, defaultModel: "smoke-model"
+        )
+        providerStore.providers = [dead]
+        providerStore.selectedID = dead.id // localhost: no key needed (send's isLocal exemption)
+        let streaming = ChatStore(providerStore: providerStore, shortcutStore: ShortcutStore())
+        log.check("root turn is streaming",
+              streaming.send("root question") && streaming.isStreaming,
+              "isStreaming=\(streaming.isStreaming)")
+        _ = streaming.queueSteer("follow up")
+        log.check("insert commits the question under the stream",
+              streaming.commitSteerInsert()
+                  && streaming.messages.last?.role == .user
+                  && streaming.messages.last?.text == "follow up",
+              "roles=\(streaming.messages.map(\.role))")
+        log.check("committed follow-up is in the inserted state",
+              streaming.steer != nil && streaming.steerPendingText == nil)
+        log.check("inserted follow-up blocks retry", !streaming.canRerunLastTurn)
+        log.check("auto-answer starts the follow-up turn",
+              streaming.autoAnswerPendingSteer()
+                  && streaming.steer == nil
+                  && streaming.messages.last?.role == .assistant
+                  && streaming.isStreaming,
+              "roles=\(streaming.messages.map(\.role))")
+        streaming.stop()
+        // Let the failed tails land: a runloop wait, not Thread.sleep (the tails
+        // are main-actor code that needs this very thread), and a poll rather
+        // than a fixed sleep (the refused connection's error event surfaces
+        // through URLSession on its own schedule).
+        var settled = false
+        var waited = 0.0
+        while !settled, waited < 5 {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            waited += 0.05
+            settled = !streaming.isStreaming
+        }
+        log.check("the failed tails land", settled, "waited=\(waited)s")
+        log.check("retry frees up once the queue is spent", streaming.canRerunLastTurn)
+
+        // A queued follow-up never survives into a fresh chat.
+        _ = streaming.queueSteer("leftover")
+        streaming.newChat()
+        log.check("newChat drops the queue", streaming.steer == nil)
+
+        restoreDefaults()
+        try? FileManager.default.removeItem(at: scratch)
+        try? FileManager.default.removeItem(at: streamScratch)
+        log.finish()
+    }
+}
+
 // Cross-conversation search behind the history popover's field (no UI).
 if CommandLine.arguments.contains("--smoke-chat-search") {
     let scratch = FileManager.default.temporaryDirectory

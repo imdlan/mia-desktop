@@ -315,6 +315,13 @@ struct ComposerView: View {
     @ObservedObject var providerStore: ProviderStore
     let shortcutStore: ShortcutStore
     let isStreaming: Bool
+    /// The pending steer chip's text; nil hides the chip (an inserted
+    /// follow-up is already in the transcript and shows no chip).
+    let steerQueued: String?
+    let onSteerInsert: () -> Void
+    let onSteerDiscard: () -> Void
+    /// Parks draft+attachments as the pending chip while a reply streams.
+    let onQueue: (String, [Attachment]) -> Bool
     let focusBump: Int
     @Binding var editorMode: Bool
     let onSend: (String, [Attachment]) -> Bool
@@ -351,7 +358,16 @@ struct ComposerView: View {
                 attachCard
                     .transition(.opacity)
             }
-            composerCard
+            // spacing 0: the chip's square bottom corners sit flush on the
+            // card's top edge, so chip + field read as one surface.
+            VStack(spacing: 0) {
+                if steerQueued != nil {
+                    steerChip
+                        .padding(.horizontal, 24)
+                        .transition(.opacity)
+                }
+                composerCard
+            }
             if editorMode {
                 editorFooter
                     .transition(Self.chromeFade)
@@ -364,6 +380,7 @@ struct ComposerView: View {
         .animation(.easeOut(duration: 0.12), value: completionCandidates.isEmpty)
         .animation(.easeOut(duration: 0.12), value: model.pendingAttachments.count)
         .animation(.easeOut(duration: 0.12), value: model.attachNotice)
+        .animation(.easeOut(duration: 0.12), value: steerQueued)
         // Capsule ↔ editor is ONE surface morphing (4d); under Reduce Motion the
         // geometry snaps and only the chrome crossfade remains.
         .animation(
@@ -402,6 +419,50 @@ struct ComposerView: View {
             guard let quote = note.object as? String else { return }
             model.appendedQuote = quote
         }
+    }
+
+    // MARK: - Steer chip
+
+    /// A follow-up parked while the reply below is still streaming: one slot
+    /// (a new Enter replaces it), ✕ drops it, ↑ commits it under the streaming
+    /// row to be answered when the reply finishes. Same muted fill as the
+    /// attachment chips; rounded on top, flush with the field below.
+    private var steerChip: some View {
+        HStack(spacing: 8) {
+            Text(steerQueued ?? "")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onSteerDiscard) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Discard this follow-up")
+            Button(action: onSteerInsert) {
+                Image(systemName: "arrow.up.to.line")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Insert now — answered when the current reply finishes")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Color.primary.opacity(0.06),
+            in: UnevenRoundedRectangle(
+                cornerRadii: RectangleCornerRadii(topLeading: 10, bottomLeading: 0, bottomTrailing: 0, topTrailing: 10),
+                style: .continuous
+            )
+        )
     }
 
     // MARK: - The morphing surface (capsule ⇄ editor)
@@ -797,7 +858,18 @@ struct ComposerView: View {
     }
 
     private func submit() {
-        guard !isStreaming, canSend else { return }
+        guard canSend else { return }
+        if isStreaming {
+            // Steering: Enter while a reply streams parks the draft as the
+            // chip above the field instead of sending. A second Enter
+            // replaces it (the store's queue is one slot).
+            if onQueue(draft, model.pendingAttachments) {
+                draft = ""
+                recall = nil
+                model.clear()
+            }
+            return
+        }
         // Draft and attachments survive a send that didn't start (unknown
         // shortcut, no provider, no model, no key): the error row names the fix,
         // and the user should not have to re-attach files to retry.
