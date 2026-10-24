@@ -126,7 +126,7 @@ struct FreeProviderTemplate: Identifiable {
 
     /// The upstream community catalog this list is curated from — linked from
     /// the Add Provider menu as the full, maintained guide.
-    static let directoryURL = URL(string: "https://github.com/cheahjs/free-llm-api-resources")!
+    static let directoryURL = URL(string: "https://github.com/raullenchai/free-llm-api-resources")!
 }
 
 /// The two attachment content kinds whose provider support varies by model.
