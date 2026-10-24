@@ -3697,6 +3697,43 @@ if CommandLine.arguments.contains("--smoke-providers") {
     }
 }
 
+// Dock-icon mode (`Settings → General → Show Dock icon`): the pref flips the
+// activation policy live, and every combination must round-trip. Runs headless
+// — policy switching needs no windows, and the CLI process restores whatever
+// it found (the smoke domain is shared with the other harnesses).
+//   .build/debug/Mia --smoke-dock
+if CommandLine.arguments.contains("--smoke-dock") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let defaults = UserDefaults.standard
+    let saved = defaults.object(forKey: AppDelegate.showDockIconKey)
+    func restore() {
+        if let saved { defaults.set(saved, forKey: AppDelegate.showDockIconKey) }
+        else { defaults.removeObject(forKey: AppDelegate.showDockIconKey) }
+    }
+    var failures: [String] = []
+    func check(_ passed: Bool, _ law: String) {
+        print("\(passed ? "ok  " : "FAIL") \(law)")
+        if !passed { failures.append(law) }
+    }
+
+    defaults.set(false, forKey: AppDelegate.showDockIconKey)
+    MainActor.assumeIsolated { AppDelegate.applyDockVisibility() }
+    check(app.activationPolicy() == .accessory, "pref off keeps the app accessory")
+
+    defaults.set(true, forKey: AppDelegate.showDockIconKey)
+    MainActor.assumeIsolated { AppDelegate.applyDockVisibility() }
+    check(app.activationPolicy() == .regular, "pref on promotes to regular (Dock + ⌘Tab)")
+
+    defaults.set(false, forKey: AppDelegate.showDockIconKey)
+    MainActor.assumeIsolated { AppDelegate.applyDockVisibility() }
+    check(app.activationPolicy() == .accessory, "pref off demotes back to accessory")
+
+    restore()
+    print(failures.isEmpty ? "PASS" : "FAIL: \(failures.joined(separator: "; "))")
+    exit(failures.isEmpty ? 0 : 1)
+}
+
 // An LSUIElement app that opens nothing on launch reads as broken, and
 // double-clicking it again — the natural retry — used to be a literal no-op.
 // This drives the REAL launch path with the install marker cleared:

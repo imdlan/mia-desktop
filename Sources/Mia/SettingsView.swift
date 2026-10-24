@@ -60,6 +60,8 @@ struct SettingsView: View {
     @AppStorage("liquidGlass") private var liquidGlass = true
     @AppStorage("panelTint") private var panelTint = -1.0
     @AppStorage("appearance") private var appearanceRaw = AppearanceChoice.auto.rawValue
+    /// Dock-icon mode: promotes the app to `.regular` (Dock + ⌘Tab) live.
+    @AppStorage("showDockIcon") private var showDockIcon = false
     @AppStorage(UpdateChecker.automaticChecksKey) private var automaticUpdateChecks = true
     @AppStorage(CompletionNotifier.enabledKey) private var notifyOnCompletion = false
     @AppStorage(CompletionNotifier.soundKey) private var notifyCompletionSound = true
@@ -210,10 +212,17 @@ struct SettingsView: View {
             }
             Section {
                 KeyboardShortcuts.Recorder("Toggle Mia:", name: .toggleMia)
+                Toggle("Show Dock icon", isOn: $showDockIcon)
+                    .onChange(of: showDockIcon) { _, enabled in
+                        // @AppStorage's write timing is opaque; the apply reads
+                        // the default directly, so make the value land first.
+                        UserDefaults.standard.set(enabled, forKey: AppDelegate.showDockIconKey)
+                        AppDelegate.applyDockVisibility()
+                    }
             } header: {
                 sectionHeader("Show & Hide")
             } footer: {
-                sectionFooter("If ⌥Space is taken by another app, unbind it there or record a different shortcut.")
+                sectionFooter("If ⌥Space is taken by another app, unbind it there or record a different shortcut. The Dock icon is off by default: turn it on and Mia also appears in the Dock and ⌘Tab, with switching to it reopening the panel — the menu-bar icon and the instant no-focus panel stay exactly as they are.")
             }
             Section {
                 Toggle("Notify when replies finish", isOn: $notifyOnCompletion)

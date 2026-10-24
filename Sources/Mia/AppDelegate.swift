@@ -130,6 +130,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             MainActor.assumeIsolated { self?.updateChecker.checkIfDue() }
         }
+
+        // Dock-icon mode (Settings → General). Overrides the accessory default
+        // set before run(); the plist's LSUIElement keeps every launch that
+        // never reaches here (and every install that leaves the pref off)
+        // menubar-only.
+        Self.applyDockVisibility()
+
+        // With a Dock icon Mia joins ⌘Tab, and switching to it activates the
+        // app. The panel auto-hides on focus loss, so activating with no
+        // visible window would read as "nothing happened" — bring the panel
+        // back, unless one of Mia's own windows (Settings) already represents
+        // it on screen. Accessory apps never become active, so this only ever
+        // fires in Dock-icon mode.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self,
+                      NSApp.activationPolicy() == .regular,
+                      !self.panelController.isPanelOnScreen,
+                      !(self.settingsWindow?.isVisible ?? false) else { return }
+                self.panelController.show()
+            }
+        }
+    }
+
+    // MARK: - Dock visibility
+
+    nonisolated static let showDockIconKey = "showDockIcon"
+
+    /// Applies the persisted Dock-icon preference, live (no restart needed):
+    /// `.regular` puts Mia in the Dock and ⌘Tab, `.accessory` restores the
+    /// menubar-only form. The status item exists either way.
+    static func applyDockVisibility() {
+        let show = UserDefaults.standard.bool(forKey: showDockIconKey)
+        NSApp.setActivationPolicy(show ? .regular : .accessory)
     }
 
     // MARK: - Being findable at all
@@ -307,6 +343,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let closeItem = NSMenuItem(title: "Close Window", action: #selector(closeKeyWindow), keyEquivalent: "w")
         closeItem.target = self
         appMenu.addItem(closeItem)
+        // ⌘Q. Invisible in menubar-only mode (the status menu has its own Quit),
+        // but load-bearing once the Dock-icon pref promotes us to `.regular`:
+        // a frontmost regular app without a keyboard Quit is a dead end.
+        let quitItem = NSMenuItem(title: "Quit Mia", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
