@@ -60,8 +60,13 @@ struct Provider: Identifiable, Codable, Equatable {
 /// key. Static facts only — models come from the live `/models` fetch once a
 /// key is set, and rate limits are deliberately not encoded here (they rot;
 /// `directoryURL` is the maintained catalog). Every entry's `/models` route was
-/// live-verified OpenAI-shaped on 2026-08-04. GitHub Models is deliberately
-/// absent: its model listing is not OpenAI-shaped (`…/inference/models`
+/// live-verified OpenAI-shaped on 2026-08-04, re-probed 2026-10-24 when the
+/// three free-tier additions landed (Z AI, ModelScope and OpenCode Zen return
+/// live model lists even without a key; Z AI answers an auth challenge; Cohere
+/// is WAF-blocked from this network, so it rides its 08-04 verification — its
+/// compat path is still the OpenAI-shaped one, the catalog's `api.cohere.com/v2`
+/// is Cohere's NATIVE api and would not work here). GitHub Models is
+/// deliberately absent: its model listing is not OpenAI-shaped (`…/inference/models`
 /// answers 410; the catalog lives elsewhere), so Mia's client can't
 /// complete setup against it. OpenRouter's free models need no entry — the
 /// standing OpenRouter preset already covers them.
@@ -92,7 +97,7 @@ struct FreeProviderTemplate: Identifiable {
             name: "Mistral",
             baseURL: "https://api.mistral.ai/v1",
             keyURL: "https://console.mistral.ai/api-keys",
-            note: "free use needs the Experiment plan enabled in the console"
+            note: "free tier, no card — console sign-up required"
         ),
         FreeProviderTemplate(
             name: "Cerebras",
@@ -103,8 +108,8 @@ struct FreeProviderTemplate: Identifiable {
         FreeProviderTemplate(
             name: "NVIDIA NIM",
             baseURL: "https://integrate.api.nvidia.com/v1",
-            keyURL: "https://build.nvidia.com",
-            note: nil
+            keyURL: "https://build.nvidia.com/settings/api-keys",
+            note: "key needs phone verification"
         ),
         FreeProviderTemplate(
             name: "Cohere",
@@ -117,6 +122,24 @@ struct FreeProviderTemplate: Identifiable {
             baseURL: "https://router.huggingface.co/v1",
             keyURL: "https://huggingface.co/settings/tokens",
             note: "a small monthly credit rather than an unlimited tier"
+        ),
+        FreeProviderTemplate(
+            name: "Z AI (Zhipu)",
+            baseURL: "https://open.bigmodel.cn/api/paas/v4",
+            keyURL: "https://open.bigmodel.cn/usercenter/apikeys",
+            note: "GLM Flash models are free (1 concurrent request)"
+        ),
+        FreeProviderTemplate(
+            name: "ModelScope",
+            baseURL: "https://api-inference.modelscope.cn/v1",
+            keyURL: "https://modelscope.cn/my/myaccesstoken",
+            note: "free daily quota — the model list loads even without a key"
+        ),
+        FreeProviderTemplate(
+            name: "OpenCode Zen",
+            baseURL: "https://opencode.ai/zen/v1",
+            keyURL: "https://opencode.ai/auth",
+            note: nil
         ),
     ]
 
