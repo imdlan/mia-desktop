@@ -16,7 +16,7 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 ## Features
 
 - **Instant panel** — a non-activating `NSPanel`, so showing it never steals focus from the app underneath and dismissing it returns focus immediately. Remembers where you last dragged it. ⌘P pins it open.
-- **Any OpenAI-compatible provider** — OpenAI, OpenRouter, or any custom endpoint, plus local models via Ollama or LM Studio (no API key needed). Switch provider and model from a pill in the panel header; long catalogs (OpenRouter ships 300+) filter as you type.
+- **Any OpenAI-compatible provider** — OpenAI, OpenRouter, or any custom endpoint, plus local models via Ollama or LM Studio (no API key needed). Switch provider and model from a pill in the panel header; long catalogs (OpenRouter ships 300+) filter as you type. Free-tier templates (Groq, Gemini, Mistral, Cerebras, NVIDIA NIM, Cohere, Hugging Face, Z AI, ModelScope, OpenCode Zen) add a provider in one click, each seeded with a popular free model — see the [free-LLM catalog](https://github.com/open-free-llm-api/awesome-freellm-apis) they are curated from.
 - **Slash commands** — your own prompt templates with a `{input}` placeholder and an autocomplete popup when the draft starts with `/`.
 - **Retry the last answer** — with a different model if you like: switch the pill, press Retry. *Edit prompt* puts your last message back in the composer instead, and **↑** in an empty composer walks back through prompts you've sent.
 - **See the thinking** — while a reasoning model works, its thoughts scroll in a small window you can expand; once the answer lands they fold into a collapsed *Reasoning* section above it.
@@ -29,7 +29,8 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 - **Auto-named chats** — after a reply lands, the current provider is asked once (≤24 tokens) for a short title. Toggle it in Settings › Chat.
 - **Turn-cost stats** — the reply footer shows what each answer cost: `62518 tokens · 5m 42s · 51.2 tok/s`. Total tokens include the prompt (the cost-facing number); the rate divides output tokens by the network time, so a tool-heavy turn dilutes it. Works on every provider path — OpenAI-compatible (`stream_options.include_usage`), Codex app-server, and the ChatGPT backend; a provider that reports no usage falls back to duration alone. No toggle — it just sits in the footer.
 - **Background notifications** — the panel hides whenever you click away, so a reply finishing elsewhere would go unnoticed. Turn it on in Settings › General and a banner (plus optional sound) marks every turn that finishes or fails; click the banner to reopen the panel. Off by default.
-- **Export your chats** — right-click a chat in the ⌘Y history popover for Markdown or JSON, or Export All to a folder; a way out before the 50-chat storage cap prunes anything.
+- **Queue a follow-up while the reply streams** — Enter during generation parks your next question as a chip above the input (a second Enter replaces it). ✕ drops it; ↑ inserts it under the streaming answer without disturbing the turn, and it is answered automatically the moment the turn truly ends — Stop included.
+- **Export your chats** — right-click a chat in the ⌘Y history popover for Markdown or JSON, or Export All to a folder; a way out before the 50-chat storage cap prunes anything. A single reply exports too: the footer's Export button (next to Copy/Fork) saves that answer as Markdown, reasoning included.
 
 ## Install
 
@@ -118,6 +119,6 @@ Mia is a renamed and continued fork of [PopChat](https://github.com/lec77/PopCha
 
 ## Status
 
-Version 0.2.0 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
+Version 0.4.0 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
 
 The direct ChatGPT-subscription path is unofficial and potentially risky; it is retained for existing users but may break or conflict with account/usage terms. The preferred alternative delegates to the user's own Codex installation through the experimental `codex app-server` protocol. That path requires the user to install, authenticate, and maintain Codex, and may need compatibility updates as the protocol evolves.

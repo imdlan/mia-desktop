@@ -158,3 +158,40 @@
 
 ### 验证(Owner: Orchestrator)
 - `swift build` 零 error;`./build.sh` bundle 冒烟 6/6 PASS;过滤/键盘/⎋ 行为与大目录 provider 经用户真机手动测试通过。
+
+## P10 单条回复导出 + thinking 阶段贴底(用户需求)
+
+**背景**:导出只有整对话;且 thinking 阶段/发送瞬间不贴底,新气泡被输入框遮住一半。
+
+### 需求
+- R10.1 assistant footer 的 Copy/Fork 行新增 Export(`square.and.arrow.up`),右键 Export Reply…;NSSavePanel 导出单条 Markdown(含 reasoning 引用块),文件名 `<标题 slug>-reply-<id 前 6>`,正文经 `fullText(of:)` 点按时解析(绕过打字机延迟,与 Copy 同语义)。
+- R10.2 `followingWaitingGrowth`:macOS 15 以 `onScrollGeometryChange` 跟踪 content/container 高度变化,pinned 时**无动画**贴底;macOS 14 以 `pendingStatus/pendingReasoning` onChange 兜底。修复 waiting indicator 长高(status 行→3 行推理窗)与发送瞬间 compact→全高窗口动画导致的不贴底。铁律:流式 tick 期间跟随滚动不得带动画(历史冻结教训)。
+
+### 验证(Owner: Orchestrator)
+- `swift build` 零 error;`--smoke-export` 9/9(reasoningBlock/slug 抽取字节级不变);滚动行为人工验收。
+
+## P11 Steer——流式输出中排队追问(用户需求)
+
+**背景**:输出过程中无法追加提问。语义经调研定稿为**不打断的 queue/follow-up**(业界 Steer 多指打断;Claude Code 的"下一停顿注入"是社区吐槽点),ChatGPT/Codex 的排队追问同款。
+
+### 需求
+- R11.1 `ChatStore.SteerState`(pending/inserted 单槽):流式中 Enter 入队为 chip(再次 Enter **替换**——用户拍板);✕(`xmark`)丢弃;↑(`arrow.up.to.line`)经共享 preflight 后把 user 行**立即追加**到流式 assistant 行之下(streamTask 的 assistantIndex 簿记对此安全),置 inserted。
+- R11.2 streamTask 尾部在**真回合结束**(含 Stop——用户拍板)自动 `performTurn()` 作答;`send()` 零行为重构为 `preflight()+performTurn()`。已插入待答期间 `canRerunLastTurn` 置否;newChat/adopt/fork/deleteConversation 清理;chip 不落盘,插入行随 persist 落盘。
+- R11.3 chip UI:紧贴输入框上沿(VStack spacing 0),顶圆角/底直角(`UnevenRoundedRectangle`),`Color.primary.opacity(0.06)`,比输入框窄、水平居中,文字左对齐尾省略。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-steer` 17 项离线全过(127.0.0.1:9 拒连,无真实网络);`--smoke-rerun` 回归证明 send 重构零行为变化;chip 视觉人工验收。
+
+## P12 免费模板扩充 + 预填默认模型(用户需求)
+
+**背景**:"More free APIs" 链接 404;国内供应商与 opencode 缺位。
+
+### 需求
+- R12.1 目录改指 `open-free-llm-api/awesome-freellm-apis`(经两次更正定稿)。
+- R12.2 新增模板(均实测 `/models`):Z AI 智谱(GLM Flash 免费,1 并发)、ModelScope(61 免费模型,无 key 即列模型)、OpenCode Zen(opencode 官方网关);NVIDIA note 补手机验证、Mistral note 去计划名。DeepSeek 不加(无免费层,2026-07-22 已从 preset 退役)。
+- R12.3 `FreeProviderTemplate.defaultModel` 单 ID 种子(名单 ID 必 rot,首 fetch 成功后被实盘覆盖):Z AI→`glm-4.7-flash`、ModelScope→`DeepSeek-V4.1-Flash-1017`、Zen→`glm-5.3-flash-free`。
+- R12.4 迁移 healing:freeTemplate 命中且 defaultModel 为空的存量行回填种子;`retiredPresetDefaults`(OpenAI gpt-4o,2027-01-14 关停)且 selectedModels 为空的行刷新为当前出厂默认。
+- R12.5 切换器 `allModels` 未 fetch 时以预填默认作单行目录(pill/列表/计数一致,↩ 可显式提交)。
+
+### 验证(Owner: Orchestrator)
+- 端点实测(curl /models,2026-10-24);`--smoke-providers` 修复 56dbb10 后的既有断言失败(首焦点已是过滤框)后全过;回填/healing 经用户真实 defaults 数据确认生效。
