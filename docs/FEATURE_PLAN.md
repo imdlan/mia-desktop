@@ -195,3 +195,15 @@
 
 ### 验证(Owner: Orchestrator)
 - 端点实测(curl /models,2026-10-24);`--smoke-providers` 修复 56dbb10 后的既有断言失败(首焦点已是过滤框)后全过;回填/healing 经用户真实 defaults 数据确认生效。
+
+## P13 Show Dock icon 开关——⌘Tab/Dock 可唤回 panel(用户需求)
+
+**背景**:app 为 LSUIElement/accessory 形态,无 Dock 图标也不进 ⌘Tab;用户依赖 ⌘Tab 巡视切窗时找不到 Mia。系统行为非 bug。
+
+### 需求
+- R13.1 Settings → General → Show & Hide 新增 "Show Dock icon"(UserDefaults `showDockIcon`,默认关):运行时 `setActivationPolicy(.regular/.accessory)` 即时切换,无需重启;状态栏图标与 nonactivating panel 交互全部保留。
+- R13.2 regular 模式 `didBecomeActive` 时 panel 不可见且 Settings 窗口不可见则唤回 panel——⌘Tab/点 Dock 激活而无窗口弹出会像"没反应"。accessory app 永不 become active,故该 observer 仅在 Dock 模式生效。
+- R13.3 mainMenu 补 ⌘Q Quit(regular 下菜单栏可见,前台 regular app 无键盘退出是死路;与状态菜单 Quit 同为 terminate: 路径)。Dock 点击唤回走既有 `applicationShouldHandleReopen`。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-dock` 3 项(off 保持 accessory/on 升 regular/off 降回);providers/steer 回归;Settings 渲染截图;⌘Tab 实际唤回人工验收。

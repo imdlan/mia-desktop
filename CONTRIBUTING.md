@@ -37,6 +37,7 @@ Four more need neither network nor GUI, plus one that drives the real composer:
 ```sh
 .build/debug/Mia --smoke-rerun         # Retry / Edit prompt truncation, fork safety, ↑ history storage
 .build/debug/Mia --smoke-steer         # follow-up queueing mid-stream: chip lifecycle, insert, auto-answer
+.build/debug/Mia --smoke-dock          # Dock-icon pref flips the activation policy live, both ways
 .build/debug/Mia --smoke-chat-search   # cross-conversation body search + excerpts
 .build/debug/Mia --smoke-export        # markdown/JSON export encoding, fork resolution, write loop
 .build/debug/Mia --smoke-selection     # selection-quote block formatting (Services flow)
