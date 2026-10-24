@@ -358,6 +358,17 @@ final class ProviderStore: ObservableObject {
             && migrated[index].name != Self.chatGPTProviderName {
             migrated[index].name = Self.chatGPTProviderName
         }
+        // Free-template rows added before their template grew a seeded
+        // defaultModel: backfill the seed so the pill isn't blank behind a key.
+        // Only ever writes where defaultModel is EMPTY — a successful fetch or
+        // a user choice fills it (and selectedModels wins the resolution chain
+        // regardless) — so this cannot override anything the user set.
+        for index in migrated.indices {
+            guard migrated[index].defaultModel.isEmpty,
+                  let template = FreeProviderTemplate.named(migrated[index].freeTemplate),
+                  !template.defaultModel.isEmpty else { continue }
+            migrated[index].defaultModel = template.defaultModel
+        }
 
         self.providers = migrated
         self.selectedID = selectedID ?? migrated[0].id
