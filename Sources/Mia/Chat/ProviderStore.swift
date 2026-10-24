@@ -358,6 +358,20 @@ final class ProviderStore: ObservableObject {
             && migrated[index].name != Self.chatGPTProviderName {
             migrated[index].name = Self.chatGPTProviderName
         }
+        // Preset rows still on a retired factory default: heal to the preset's
+        // current one, but only where the user never chose a model of their
+        // own — an explicit choice lives in selectedModels and always wins.
+        for index in migrated.indices {
+            guard migrated[index].isPreset,
+                  let retired = Self.retiredPresetDefaults[migrated[index].name],
+                  retired.contains(migrated[index].defaultModel),
+                  selectedModels[migrated[index].id] == nil else { continue }
+            if let current = Self.presets().first(where: {
+                $0.name == migrated[index].name && !$0.defaultModel.isEmpty
+            }) {
+                migrated[index].defaultModel = current.defaultModel
+            }
+        }
         // Free-template rows added before their template grew a seeded
         // defaultModel: backfill the seed so the pill isn't blank behind a key.
         // Only ever writes where defaultModel is EMPTY — a successful fetch or
@@ -465,6 +479,13 @@ final class ProviderStore: ObservableObject {
     /// `presets()` and a hand-added one is `isPreset: false`), so this needs no
     /// one-shot flag; it just never finds anything to drop after the first launch.
     static let retiredPresetNames: Set<String> = ["DeepSeek", "LM Studio (local)"]
+
+    /// Factory defaults superseded on their preset (the model shut down or was
+    /// replaced upstream): a row still carrying one — and no user-chosen model,
+    /// i.e. nothing in `selectedModels` — heals to the preset's current
+    /// default. Keyed by preset name so a custom provider that merely shares
+    /// the model id is never touched. gpt-4o snapshots close 2027-01-14.
+    static let retiredPresetDefaults: [String: [String]] = ["OpenAI": ["gpt-4o"]]
 
     // MARK: - Selection
 

@@ -75,8 +75,17 @@ struct ProviderSwitcher: View {
     private var previewProvider: Provider? { store.providers.first { $0.id == previewID } }
     /// The previewed provider's FULL catalog — filtering runs over all of it,
     /// not just the rendered prefix, so a hit past row 200 is still findable
-    /// (long catalogs were exactly why the filter exists).
-    private var allModels: [String] { store.knownModels[previewID] ?? [] }
+    /// (long catalogs were exactly why the filter exists). Before the first
+    /// fetch the seeded default (a preset's factory model or a free template's
+    /// seed) stands in as a one-row catalog, so the pill, the list and the
+    /// header agree and ↩ can commit it explicitly; the first real fetch
+    /// replaces it wholesale.
+    private var allModels: [String] {
+        let known = store.knownModels[previewID] ?? []
+        if !known.isEmpty { return known }
+        let seed = store.rememberedModel(previewID)
+        return seed.isEmpty ? [] : [seed]
+    }
     /// What the list renders: query-filtered, then capped.
     private var models: [String] {
         Array(filteredModels.prefix(Metrics.renderCap))
