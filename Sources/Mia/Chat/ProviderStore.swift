@@ -77,6 +77,13 @@ struct FreeProviderTemplate: Identifiable {
     let keyURL: String
     /// One caveat worth stating up front (plan opt-in, credit model), or nil.
     let note: String?
+    /// One popular free model to seed the pill with, so the provider is usable
+    /// the moment a key lands — `var`+default so the seven older entries don't
+    /// carry one. Deliberately a SINGLE id, never a list: the live `/models`
+    /// fetch is the real catalog, and it overwrites this seed on its first
+    /// success (see the defaultModel refresh in fetchModels), so the id only
+    /// has to be roughly current, not maintained.
+    var defaultModel: String = ""
 
     var id: String { name }
 
@@ -127,19 +134,22 @@ struct FreeProviderTemplate: Identifiable {
             name: "Z AI (Zhipu)",
             baseURL: "https://open.bigmodel.cn/api/paas/v4",
             keyURL: "https://open.bigmodel.cn/usercenter/apikeys",
-            note: "GLM Flash models are free (1 concurrent request)"
+            note: "GLM Flash models are free (1 concurrent request)",
+            defaultModel: "glm-4.7-flash"
         ),
         FreeProviderTemplate(
             name: "ModelScope",
             baseURL: "https://api-inference.modelscope.cn/v1",
             keyURL: "https://modelscope.cn/my/myaccesstoken",
-            note: "free daily quota — the model list loads even without a key"
+            note: "free daily quota — the model list loads even without a key",
+            defaultModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017"
         ),
         FreeProviderTemplate(
             name: "OpenCode Zen",
             baseURL: "https://opencode.ai/zen/v1",
             keyURL: "https://opencode.ai/auth",
-            note: nil
+            note: nil,
+            defaultModel: "glm-5.3-flash-free"
         ),
     ]
 
@@ -834,7 +844,7 @@ final class ProviderStore: ObservableObject {
     func addTemplate(_ template: FreeProviderTemplate) -> UUID {
         let provider = Provider(
             id: UUID(), name: uniqueName(template.name), baseURL: template.baseURL,
-            isPreset: false, defaultModel: "", freeTemplate: template.name
+            isPreset: false, defaultModel: template.defaultModel, freeTemplate: template.name
         )
         providers.append(provider)
         return provider.id
