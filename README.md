@@ -15,7 +15,7 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 
 ## Features
 
-- **Instant panel** — a non-activating `NSPanel`, so showing it never steals focus from the app underneath and dismissing it returns focus immediately. Remembers where you last dragged it. ⌘P pins it open. An optional Dock icon (Settings → General) adds Mia to the Dock and ⌘Tab — switching to it reopens the panel — while the menu-bar form and the no-focus behavior stay exactly as they are.
+- **Instant panel** — a non-activating `NSPanel`, so showing it never steals focus from the app underneath and dismissing it returns focus immediately. Remembers where you last dragged it. ⌘P pins it open. An optional Dock icon (Settings → General) adds Mia to the Dock and ⌘Tab — switching to it reopens the panel — while the menu-bar form and the no-focus behavior stay exactly as they are. The classic pop-over behavior (hide whenever another app takes focus) can be turned off in Settings → General → "Hide when switching apps"; ⌘P remains the per-session pin on top of that.
 - **Any OpenAI-compatible provider** — OpenAI, OpenRouter, or any custom endpoint, plus local models via Ollama or LM Studio (no API key needed). Switch provider and model from a pill in the panel header; long catalogs (OpenRouter ships 300+) filter as you type. Free-tier templates (Groq, Gemini, Mistral, Cerebras, NVIDIA NIM, Cohere, Hugging Face, Z AI, ModelScope, OpenCode Zen) add a provider in one click, each seeded with a popular free model — see the [free-LLM catalog](https://github.com/open-free-llm-api/awesome-freellm-apis) they are curated from.
 - **Slash commands** — your own prompt templates with a `{input}` placeholder and an autocomplete popup when the draft starts with `/`.
 - **Retry the last answer** — with a different model if you like: switch the pill, press Retry. *Edit prompt* puts your last message back in the composer instead, and **↑** in an empty composer walks back through prompts you've sent.
@@ -119,6 +119,6 @@ Mia is a renamed and continued fork of [PopChat](https://github.com/lec77/PopCha
 
 ## Status
 
-Version 0.5.0 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
+Version 0.6.0 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
 
 The direct ChatGPT-subscription path is unofficial and potentially risky; it is retained for existing users but may break or conflict with account/usage terms. The preferred alternative delegates to the user's own Codex installation through the experimental `codex app-server` protocol. That path requires the user to install, authenticate, and maintain Codex, and may need compatibility updates as the protocol evolves.
