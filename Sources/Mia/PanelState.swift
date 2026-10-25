@@ -7,8 +7,8 @@ final class PanelState: ObservableObject {
     /// decision made once, not re-made every session. 0.6.0's short-lived
     /// "Hide when switching apps" preference migrates in: turning that off
     /// meant the same thing as pinning, so it seeds this flag.
-    @Published var pinned = Self.restorePin() {
-        didSet { UserDefaults.standard.set(pinned, forKey: Self.pinKey) }
+    @Published var pinned = PanelState.restorePin() {
+        didSet { UserDefaults.standard.set(pinned, forKey: PanelState.pinKey) }
     }
 
     /// Bumped every time the panel is shown or re-focused; the chat view observes
