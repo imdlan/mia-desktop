@@ -358,7 +358,12 @@ struct HistoryPopover: View {
                         .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    if ownsDelete {
+                    // A FIXED 20pt slot the trash and checkmark crossfade in —
+                    // never insert/remove. Inserting the button on hover reflowed
+                    // the title and timestamp on every row the pointer crossed,
+                    // which read as the whole list jittering (the layout jump
+                    // no amount of row-height pinning could hide).
+                    ZStack {
                         Button {
                             store.deleteConversation(meta.id)
                         } label: {
@@ -371,11 +376,15 @@ struct HistoryPopover: View {
                         .buttonStyle(.plain)
                         .keyboardShortcut(.delete, modifiers: .command)
                         .help("Delete chat (⌘⌫)")
-                    } else if isCurrent {
+                        .opacity(ownsDelete ? 1 : 0)
+                        .allowsHitTesting(ownsDelete)
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Theme.color(accentHex))
+                            .opacity(isCurrent && !ownsDelete ? 1 : 0)
                     }
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: ownsDelete)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: isCurrent)
                     Text(timestamp(meta.updatedAt))
                         .font(.system(size: 10))
                         .foregroundStyle(.primary.opacity(0.45))

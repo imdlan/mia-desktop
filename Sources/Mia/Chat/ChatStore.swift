@@ -709,7 +709,7 @@ final class ChatStore: ObservableObject {
     /// Typewriter reveal speed. The per-tick step is this divided by the tick rate,
     /// so the granularity floor is a perf consequence (~6 chars at 33ms), not a
     /// choice: every tick re-lays out the growing message.
-    nonisolated private static let typewriterCharsPerSecond = 180
+    nonisolated private static let typewriterCharsPerSecond = 300
 
     /// Tick period. Each tick re-renders and re-lays-out the growing message, and
     /// that cost scales with its length — so long texts tick less often (and take
@@ -735,7 +735,7 @@ final class ChatStore: ObservableObject {
     }
 
     /// Generations of the current step that the per-character fade spans (6a).
-    nonisolated static let revealGenerations = 6
+    nonisolated static let revealGenerations = 3
 
     /// 6b pacing. A commit every ≥140 ms so a fast model can't dump the whole
     /// answer at once; 60 ms once the stream is done so the tail drains.

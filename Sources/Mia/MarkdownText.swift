@@ -881,38 +881,63 @@ struct TableBlockView: View {
     /// One entry per cell, in `MarkdownRenderer.searchableStrings` order.
     var cellFinds: [TextFind?] = []
 
+    /// Width the table may occupy, reported by the background probe below and
+    /// seeded with a plausible transcript width so the first frame is close
+    /// (same trick as `pillsRow`'s headerWidth seed). The preference lands in
+    /// the same layout pass, before anything reaches the screen.
+    @State private var available: CGFloat = 560
+
+    private var columnCount: Int { max(header.count, 1) }
+
     var body: some View {
+        let widths = Self.columnWidths(header: header, rows: rows, available: available)
         Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
                 ForEach(Array(header.enumerated()), id: \.offset) { column, cell in
-                    cellView(cell, header: true, find: cellFind(row: nil, column: column))
+                    cellView(cell, header: true, width: widths[column], find: cellFind(row: nil, column: column))
                 }
             }
             Rectangle()
                 .fill(Color.primary.opacity(0.2))
                 .frame(height: 1)
-                .gridCellColumns(max(header.count, 1))
+                .gridCellColumns(columnCount)
             ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                 GridRow {
                     ForEach(Array(row.enumerated()), id: \.offset) { column, cell in
-                        cellView(cell, header: false, find: cellFind(row: rowIndex, column: column))
+                        cellView(cell, header: false, width: widths[column], find: cellFind(row: rowIndex, column: column))
                     }
                 }
                 if rowIndex < rows.count - 1 {
                     Rectangle()
                         .fill(Color.primary.opacity(0.1))
                         .frame(height: 0.5)
-                        .gridCellColumns(max(header.count, 1))
+                        .gridCellColumns(columnCount)
                 }
             }
         }
         .padding(.vertical, 2)
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(key: TableWidthKey.self, value: geometry.size.width)
+            }
+        )
+        .onPreferenceChange(TableWidthKey.self) { available = $0 }
     }
 
-    private func cellView(_ text: String, header: Bool, find: TextFind?) -> some View {
+    private func cellView(_ text: String, header: Bool, width: CGFloat, find: TextFind?) -> some View {
         SelectableText(attributed: MarkdownRenderer.tableCell(text, bold: header), find: find)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
+            // EXPLICIT column width — the fix. Grid never re-proposes a finite
+            // width to NSViewRepresentable cells (verified by instrumenting
+            // sizeThatFits: only nil/0/∞ arrive), so a compressed cell kept its
+            // single-line answer for height while the NSTextField wrapped at the
+            // narrower frame — clipped rows, and row height left un-extended
+            // unless the field's intrinsicContentSize happened to trigger a
+            // relayout. A fixed frame makes the width proposal finite, so
+            // SelectableText measures the wrapped height itself and the row
+            // grows deterministically.
+            .frame(width: width, alignment: .leading)
     }
 
     /// Cells are numbered header-first, then row by row — the order
@@ -924,6 +949,64 @@ struct TableBlockView: View {
         }
         return cellFinds.indices.contains(index) ? cellFinds[index] : nil
     }
+
+    // MARK: - Column widths
+
+    private static let cellHPad: CGFloat = 20
+    /// Content floor for a squeezed column — narrow, but wide enough that a
+    /// short word plus padding stays legible instead of collapsing to a sliver.
+    private static let minColumn: CGFloat = 72
+
+    /// Bounded cache for single-line cell widths: tableCell re-parses markdown
+    /// on every call, and this measures every cell of every table on each body
+    /// evaluation. NSCache (not a Dictionary) so an unlucky long session evicts
+    /// instead of growing — same family as MarkdownRenderer.proseCache.
+    nonisolated(unsafe) private static let widthCache = NSCache<NSString, NSNumber>()
+
+    /// Single-line rendered width of one cell's content (no padding).
+    private static func idealWidth(_ text: String, bold: Bool) -> CGFloat {
+        let key = ((bold ? "b|" : "r|") + text) as NSString
+        if let cached = widthCache.object(forKey: key) { return cached.doubleValue }
+        let width = ceil(MarkdownRenderer.tableCell(text, bold: bold).boundingRect(
+            with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).width) + 2
+        widthCache.setObject(NSNumber(value: width), forKey: key)
+        return width
+    }
+
+    /// Ideal width per column while the table fits; once it overflows the
+    /// available width, columns narrow in proportion to their ideal width
+    /// (floored), with a uniform squeeze as the last resort when even the
+    /// floors don't fit (many columns, narrow panel).
+    static func columnWidths(header: [String], rows: [[String]], available: CGFloat) -> [CGFloat] {
+        let columns = max(header.count, 1)
+        var ideal: [CGFloat] = []
+        for column in 0..<columns {
+            var candidates: [CGFloat] = []
+            if header.indices.contains(column) {
+                candidates.append(idealWidth(header[column], bold: true) + cellHPad)
+            }
+            for row in rows {
+                candidates.append(idealWidth(row.indices.contains(column) ? row[column] : "", bold: false) + cellHPad)
+            }
+            ideal.append(candidates.max() ?? minColumn)
+        }
+        let total = ideal.reduce(0, +)
+        guard total > available, available > 0 else { return ideal }
+        var widths = ideal.map { max($0 * available / total, minColumn) }
+        let sum = widths.reduce(0, +)
+        if sum > available {
+            widths = widths.map { $0 * available / sum }
+        }
+        return widths
+    }
+}
+
+/// Reports the table's own offered width (TableBlockView's background probe).
+private struct TableWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Reusable content marked by the model for one-click copying. Shown verbatim

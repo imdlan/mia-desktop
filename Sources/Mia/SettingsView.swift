@@ -177,6 +177,8 @@ struct SettingsView: View {
 
     // MARK: - General
 
+    @AppStorage("hideOnFocusLoss") private var hideOnFocusLoss = true
+
     private var generalTab: some View {
         Form {
             Section {
@@ -219,10 +221,11 @@ struct SettingsView: View {
                         UserDefaults.standard.set(enabled, forKey: AppDelegate.showDockIconKey)
                         AppDelegate.applyDockVisibility()
                     }
+                Toggle("Hide when switching apps", isOn: $hideOnFocusLoss)
             } header: {
                 sectionHeader("Show & Hide")
             } footer: {
-                sectionFooter("If ⌥Space is taken by another app, unbind it there or record a different shortcut. The Dock icon is off by default: turn it on and Mia also appears in the Dock and ⌘Tab, with switching to it reopening the panel — the menu-bar icon and the instant no-focus panel stay exactly as they are.")
+                sectionFooter("If ⌥Space is taken by another app, unbind it there or record a different shortcut. The Dock icon is off by default: turn it on and Mia also appears in the Dock and ⌘Tab, with switching to it reopening the panel — the menu-bar icon and the instant no-focus panel stay exactly as they are. Hide when switching apps keeps the classic pop-over behavior (panel disappears the moment another app takes focus); turn it off to keep the panel on screen across app switches — ⌘P remains the always-on-top pin either way.")
             }
             Section {
                 Toggle("Notify when replies finish", isOn: $notifyOnCompletion)
@@ -423,7 +426,13 @@ struct SettingsView: View {
                 .padding(.horizontal, 14)
                 .background(
                     Theme.bubbleFill(style: style, accentHex: accentHex, dark: scheme == .dark),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    // Square bottom-trailing corner, matching the panel's user bubble (MessageRow).
+                    in: UnevenRoundedRectangle(
+                        cornerRadii: RectangleCornerRadii(
+                            topLeading: 18, bottomLeading: 18, bottomTrailing: 0, topTrailing: 18
+                        ),
+                        style: .continuous
+                    )
                 )
         }
     }

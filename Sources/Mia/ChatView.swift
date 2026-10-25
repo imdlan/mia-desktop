@@ -201,6 +201,7 @@ struct ChatView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Switch provider & model — applies to your next message")
         .fixedSize(horizontal: false, vertical: true)
         .pillBackground(hovered: modelPillHovered, pressed: switcherShown)
         .onHover { modelPillHovered = $0 }
@@ -463,6 +464,14 @@ struct ChatView: View {
                 }
             }
             .onChange(of: store.messages.count) { _, _ in
+                // A USER message being appended IS a send — the author's own
+                // action. Whatever the pin's current state (disengaged by an
+                // upward read, a ⌘F jump, a timeline jump), sending must
+                // re-engage following: otherwise the new bubble lands below the
+                // viewport, half-hidden behind the composer, and neither this
+                // gate nor the text-tick one follows the reply (the reported
+                // "bubble covered by the input" regression).
+                if store.messages.last?.role == .user { pinnedToBottom = true }
                 if pinnedToBottom {
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 } else {

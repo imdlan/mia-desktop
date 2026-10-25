@@ -137,6 +137,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // menubar-only.
         Self.applyDockVisibility()
 
+        // A runtime .accessory→.regular switch does NOT register the app with
+        // the window server's ⌘Tab list until it has been activated once — in
+        // Dock-icon mode a freshly launched Mia sat in the Dock yet was absent
+        // from ⌘Tab until the user clicked the icon. A manual launch in that
+        // mode activates once here (a login-item launch stays quiet), which
+        // both lists Mia in ⌘Tab from the start and gives the double-click a
+        // visible window, like any regular app. presentLaunchUI's activate+show
+        // covers only the FIRST launch ever; this is the every-other-day one.
+        if NSApp.activationPolicy() == .regular, !loginItem {
+            NSApp.activate(ignoringOtherApps: true)
+            panelController.show()
+        }
+
         // With a Dock icon Mia joins ⌘Tab, and switching to it activates the
         // app. The panel auto-hides on focus loss, so activating with no
         // visible window would read as "nothing happened" — bring the panel
@@ -320,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// never activate the app at all (nonactivating panel); its auto-hide is
     /// windowDidResignKey in PanelController, not this.
     func applicationDidResignActive(_ notification: Notification) {
-        guard !panelController.isPinned else { return }
+        guard !panelController.isPinned, PanelController.hideOnFocusLoss else { return }
         settingsWindow?.close()
         panelController.hide()
     }

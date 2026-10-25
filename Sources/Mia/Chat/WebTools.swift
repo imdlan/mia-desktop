@@ -309,9 +309,17 @@ struct WebToolExecutor {
     private static func checkHTTP(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard http.statusCode == 200 else {
-            let body = String(decoding: data.prefix(200), as: UTF8.self)
+            // The failure body rides two surfaces — the transcript's activity
+            // row AND the tool result the model reads — and anti-bot pages
+            // (DuckDuckGo's 202 challenge, Cloudflare's 403 interstitial) are
+            // HTML by definition, so a raw 200-char slice reads as tag soup on
+            // both. Strip to text from a bounded prefix, then trim to a snippet.
+            let body = stripHTML(String(decoding: data.prefix(2_000), as: UTF8.self))
+            let snippet = body.count > 120 ? String(body.prefix(120)) + "…" : body
             throw NSError(domain: "Mia.Web", code: http.statusCode, userInfo: [
-                NSLocalizedDescriptionKey: "HTTP \(http.statusCode): \(body)"
+                NSLocalizedDescriptionKey: snippet.isEmpty
+                    ? "HTTP \(http.statusCode) (empty body)"
+                    : "HTTP \(http.statusCode): \(snippet)"
             ])
         }
     }
@@ -327,6 +335,7 @@ struct WebToolExecutor {
                 options: [.regularExpression, .caseInsensitive]
             )
         }
+        text = text.replacingOccurrences(of: "<!--.*?-->", with: " ", options: .regularExpression)
         text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         let entities = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#x27;": "'", "&#39;": "'", "&nbsp;": " "]
         for (entity, replacement) in entities {
