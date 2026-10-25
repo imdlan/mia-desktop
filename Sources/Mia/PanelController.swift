@@ -128,17 +128,6 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// before the deactivation dismissal.
     var isPinned: Bool { state.pinned }
 
-    /// Settings › General › Show & Hide › "Hide when switching apps"
-    /// (default on — the classic pop-over behavior). Off exempts the panel
-    /// from BOTH auto-hides (resign-active and resignKey): it stays on screen
-    /// while other apps are focused. ⌘P pin is the per-session override on
-    /// top of this, not a replacement for it.
-    static var hideOnFocusLoss: Bool {
-        UserDefaults.standard.object(forKey: "hideOnFocusLoss") == nil
-            ? true
-            : UserDefaults.standard.bool(forKey: "hideOnFocusLoss")
-    }
-
     /// A user saying "go away", as opposed to the panel merely losing relevance.
     func dismiss() {
         onUserDismiss?()
@@ -412,7 +401,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        guard !state.pinned, Self.hideOnFocusLoss else { return }
+        guard !state.pinned else { return }
         // Deferred one tick so the new key window is known: if key moved to another
         // Mia window (file picker, settings), keep the panel; hide only when
         // focus left the app entirely (keyWindow becomes nil for an accessory app).
@@ -421,7 +410,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         // activated — resign-active would then never fire, and this is the only
         // auto-hide the plain hotkey flow has.
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.state.pinned, Self.hideOnFocusLoss else { return }
+            guard let self, !self.state.pinned else { return }
             if NSApp.keyWindow == nil {
                 self.hide()
             }

@@ -333,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// never activate the app at all (nonactivating panel); its auto-hide is
     /// windowDidResignKey in PanelController, not this.
     func applicationDidResignActive(_ notification: Notification) {
-        guard !panelController.isPinned, PanelController.hideOnFocusLoss else { return }
+        guard !panelController.isPinned else { return }
         settingsWindow?.close()
         panelController.hide()
     }
