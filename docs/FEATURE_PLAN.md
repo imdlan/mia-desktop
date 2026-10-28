@@ -207,3 +207,14 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-dock` 3 项(off 保持 accessory/on 升 regular/off 降回);providers/steer 回归;Settings 渲染截图;⌘Tab 实际唤回人工验收。
+
+## P14 模型列表过滤非 online 条目(用户反馈)
+
+**背景**:TokenHub(腾讯云)等目录型平台的 `/v1/models` 会列出账号未开通的模型——条目携带 `status` 字段且非 `online`,调用时报 `400004 "model or service ID does not exist"`。此前 `decodeModelList` 只解 `id`,把全量目录都放进下拉菜单,用户选中即踩坑。标准 OpenAI 形状无 `status` 字段(OpenRouter 464 条实测均无),逻辑上零影响。
+
+### 需求
+- R14.1 `Entry` 增加可选 `status` 解码:字段存在且值非 `online`(大小写不敏感)时丢弃该条目;字段缺失一律保留(absence stays absence,不猜)。
+- R14.2 被丢弃的条目不得贡献 capabilities(否则会以离线模型的元数据污染在线模型的能力判定来源)。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-attach-caps` fixture 扩展四例:无字段保留、`"Online"`(大写)保留、`"offline"` 丢弃、丢弃条目无 capabilities;`--smoke-providers`、`--smoke-migration` 回归通过;`./build.sh` release 构建 + bundle 冒烟通过。
