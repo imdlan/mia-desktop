@@ -2922,12 +2922,17 @@ if CommandLine.arguments.contains("--smoke-attach-caps") {
     guard after.source == .manual else { fail("a learned record must not demote a manual exception") }
 
     // 6. OpenRouter modality decoding: capabilities exactly for entries that
-    //    state them — absence stays absence.
-    let fixture = #"{"data":[{"id":"vendor/vision-file","architecture":{"input_modalities":["text","image","file"]}},{"id":"vendor/text-only","architecture":{"input_modalities":["text"]}},{"id":"vendor/unstated"}]}"#
+    //    state them — absence stays absence. Status filtering: entries that
+    //    publish a non-online status are dropped (TokenHub lists unactivated
+    //    models); entries without the field are all kept (plain OpenAI shape).
+    let fixture = #"{"data":[{"id":"vendor/vision-file","architecture":{"input_modalities":["text","image","file"]}},{"id":"vendor/text-only","architecture":{"input_modalities":["text"]}},{"id":"vendor/unstated"},{"id":"vendor/online","status":"Online"},{"id":"vendor/dormant","status":"offline"},{"id":"vendor/vision-dormant","status":"offline","architecture":{"input_modalities":["text","image"]}}]}"#
     guard let (ids, capabilities) = try? ProviderStore.decodeModelList(Data(fixture.utf8)) else {
         fail("model-list fixture failed to decode")
     }
-    guard ids == ["vendor/text-only", "vendor/unstated", "vendor/vision-file"] else { fail("ids wrong: \(ids)") }
+    guard ids == ["vendor/online", "vendor/text-only", "vendor/unstated", "vendor/vision-file"] else { fail("ids wrong: \(ids)") }
+    guard capabilities["vendor/vision-dormant"] == nil else {
+        fail("a dropped entry must not contribute capabilities")
+    }
     guard capabilities["vendor/vision-file"] == ModelCapabilities(images: true, files: true),
           capabilities["vendor/text-only"] == ModelCapabilities(images: false, files: false),
           capabilities["vendor/unstated"] == nil else {

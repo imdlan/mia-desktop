@@ -931,24 +931,33 @@ final class ProviderStore: ObservableObject {
         struct Entry: Decodable {
             let id: String
             let architecture: Architecture?
+            /// Catalog-style platforms (TokenHub) list models the account hasn't
+            /// activated, marked non-online; the plain OpenAI shape has no such
+            /// field, and absence must keep the entry (never a guess).
+            let status: String?
         }
         let data: [Entry]
     }
 
     /// Split out (and non-private) so the attach-caps harness can feed it fixture
     /// JSON: ids as before, plus capabilities for exactly the entries that state
-    /// their modalities — absence stays absence, never a guess.
+    /// their modalities — absence stays absence, never a guess. Entries that
+    /// explicitly publish a `status` other than "online" (case-insensitive) are
+    /// dropped — they render in menus but fail every call with 400-style errors.
     nonisolated static func decodeModelList(_ data: Data) throws -> (ids: [String], capabilities: [String: ModelCapabilities]) {
         let list = try JSONDecoder().decode(ModelList.self, from: data)
+        let usable = list.data.filter { entry in
+            entry.status?.lowercased() == nil || entry.status?.lowercased() == "online"
+        }
         var capabilities: [String: ModelCapabilities] = [:]
-        for entry in list.data {
+        for entry in usable {
             guard let modalities = entry.architecture?.inputModalities else { continue }
             capabilities[entry.id] = ModelCapabilities(
                 images: modalities.contains("image"),
                 files: modalities.contains("file")
             )
         }
-        return (list.data.map(\.id).sorted(), capabilities)
+        return (usable.map(\.id).sorted(), capabilities)
     }
 
     func isFetching(_ id: UUID) -> Bool { fetchingProviders.contains(id) }
