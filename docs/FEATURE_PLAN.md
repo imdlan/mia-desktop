@@ -218,3 +218,15 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-attach-caps` fixture 扩展四例:无字段保留、`"Online"`(大写)保留、`"offline"` 丢弃、丢弃条目无 capabilities;`--smoke-providers`、`--smoke-migration` 回归通过;`./build.sh` release 构建 + bundle 冒烟通过。
+
+## P15 SelectableText 测高与绘制统一,消除末行被 footer 遮挡(用户反馈)
+
+**背景**:AI 回复段落最后一行折行后不可见,点击该段才出现、点击别处又消失。根因是"两套 TextKit":`sizeThatFits` 用 `boundingRect` 测高,实际绘制走 `NSTextField` 自己的 cell 布局——"标题后跟段落"形态下 `boundingRect` 少算一段 paragraphSpacing(cell 需 606pt 时只报 600pt),SwiftUI 据此给的 frame 矮 6pt,末行下缘伸进 footer 行被盖;点击触发 field editor 盖顶层才可见。13pt CJK 字形被切底部 6pt 即不可读,故用户感知为"整行消失"。
+
+### 需求
+- R15.1 `sizeThatFits` 改用 field 自己的 `NSCell.cellSize(forBounds:)` 测量(谁绘制、谁测量),`boundingRect` 降级为无 cell 时的 fallback。
+- R15.2 测量前把 cell 同步到将显示的字符串:SwiftUI 可能先于 `updateNSView` 调 `sizeThatFits`(streaming 每 tick),cell 里若是旧字符串,测出的高度滞后一拍。
+- R15.3 新增 `--smoke-clip` 回归:8 类内容形态(latin/cjk/mixed/paras/listend/headend/linksend/urlend)× 220–700pt 宽度 0.5pt 步进共约 7700 个离屏 NSHostingView 布局,断言每个 NSTextField 的 frame 高度 ≥ 其 cell 在该宽度下的实际需要;修复前 paras 形态 961 处失配(均 +6pt),修复后 0 失配。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-clip` 0 失配;`--smoke-typing`/`--smoke-scroll`/`--smoke-find`/`--smoke-rerun`/`--smoke-input`/`--smoke-history` 回归全过(`--smoke-pasteable`/`--smoke-search`/`--smoke-file` 失败为预先存在的环境问题:缺真实 API key / 裸二进制缺 bundle,与 0.6.2 对照二进制一致);用户真机确认末行无需点击即可见。
