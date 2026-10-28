@@ -2697,6 +2697,66 @@ if CommandLine.arguments.contains("--smoke-find") {
 // that round trip has to be lossless; and the reason the picker is hand-rolled
 // at all is that a color leaving 0…1 packs into #FFFFFF (the system color
 // panel's extended-range colors did exactly that — "my accent turns white").
+if CommandLine.arguments.contains("--smoke-clip") {
+    // Diagnostic: does SelectableText's SwiftUI frame ever come out SHORTER than
+    // what its own NSTextField cell needs at that frame width? (Reported symptom:
+    // last wrapped line hidden under the footer until the paragraph is clicked.)
+    func fail(_ message: String) -> Never {
+        print("FAIL: \(message)")
+        exit(1)
+    }
+    let samples: [(String, String)] = [
+        ("latin", (0..<30).map { "The quick brown fox jumps over the lazy dog number \($0)." }.joined(separator: " ")),
+        ("cjk", (0..<30).map { "这是第\($0)段测试文本，用来检查最后一行折行后的显示问题。" }.joined(separator: "")),
+        ("mixed", (0..<10).map { "混合 text with `inline code` and **bold** 第\($0)条，继续补充更多字符以触发换行。" }.joined(separator: "\n")),
+        ("paras", (0..<8).map { "## 标题\($0)\n\n段落内容，包含 **加粗**、`代码` 与普通文字，确保多段落多样式。" }.joined(separator: "\n")),
+        ("listend", "结尾是列表的样本：\n\n" + (0..<12).map { "- 列表条目 \($0)，带一点说明文字让行宽变化。" }.joined(separator: "\n")),
+        ("headend", (0..<6).map { "段落 \($0) 的内容，普通文字若干。" }.joined(separator: "\n") + "\n\n## 结尾标题"),
+        ("linksend", (0..<10).map { "参见 [链接\($0)](https://example.com/path/\($0)/segment) 的说明文字。" }.joined(separator: " ")),
+        ("urlend", (0..<6).map { "长地址 https://example.com/a/very/long/path/segment/\($0)/with/more/tail 内容。" }.joined(separator: " ")),
+    ]
+    var mismatches = 0
+    var perSample: [String: Int] = [:]
+    var maxDelta: [String: CGFloat] = [:]
+    for (name, source) in samples {
+        for width: CGFloat in stride(from: CGFloat(220), through: CGFloat(700), by: CGFloat(0.5)) {
+            let attributed = MarkdownRenderer.attributedProse(source)
+            let host = NSHostingView(rootView: SelectableText(attributed: attributed))
+            host.frame = NSRect(x: 0, y: 0, width: width, height: 10_000)
+            host.layoutSubtreeIfNeeded()
+            func firstTextField(_ view: NSView) -> NSTextField? {
+                if let field = view as? NSTextField { return field }
+                for sub in view.subviews {
+                    if let found = firstTextField(sub) { return found }
+                }
+                return nil
+            }
+            guard let field = firstTextField(host) else {
+                fail("no NSTextField in hosting subtree for \(name)")
+            }
+            let frame = field.frame
+            let needed = field.cell!.cellSize(forBounds: NSRect(
+                origin: .zero,
+                size: NSSize(width: frame.width, height: .greatestFiniteMagnitude)
+            ))
+            let delta = needed.height - frame.height
+            if delta > (maxDelta[name] ?? 0) { maxDelta[name] = delta }
+            if delta > 0.5 {
+                mismatches += 1
+                perSample[name, default: 0] += 1
+                if delta > 10 {
+                    print(String(format: "BIG MISMATCH %@ w=%.1f: frame=(%.1f,%.1f) cellNeeds=%.1f (+%.1f)",
+                                 name, width, frame.width, frame.height, needed.height, delta))
+                }
+            }
+        }
+    }
+    print("per-sample counts:", perSample)
+    print("max deltas:", maxDelta)
+    print(mismatches == 0 ? "OK: no frame/cell height mismatches" : "TOTAL MISMATCHES: \(mismatches)")
+    exit(mismatches == 0 ? 0 : 1)
+}
+
 if CommandLine.arguments.contains("--smoke-accent") {
     func fail(_ message: String) -> Never {
         print("FAIL: \(message)")

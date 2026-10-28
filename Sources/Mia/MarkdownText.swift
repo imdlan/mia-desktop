@@ -686,10 +686,29 @@ struct SelectableText: NSViewRepresentable {
             return cached
         }
         Self.measurementCount += 1
-        let bounds = attributed.boundingRect(
-            with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
+        // Measure with the cell that will DRAW the string, not a parallel
+        // boundingRect pass: for some content shapes (a paragraph following a
+        // header) boundingRect drops one inter-paragraph spacing the cell's
+        // own TextKit layout includes, so the frame came up ~6pt short and the
+        // last line's bottom sat under the message footer until a click hosted
+        // a field editor over it. Same machinery, same numbers, by construction.
+        // Sync first: layout may probe sizeThatFits before updateNSView lands
+        // the new string (streaming ticks), and the cell must hold what will
+        // actually draw for the measurement to mean anything.
+        let display = displayed
+        if nsView.attributedStringValue != display {
+            nsView.attributedStringValue = display
+        }
+        let bounds = nsView.cell?.cellSize(forBounds: NSRect(
+            origin: .zero,
+            size: NSSize(width: maxWidth, height: .greatestFiniteMagnitude)
+        )) ?? {
+            let rect = attributed.boundingRect(
+                with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            return CGSize(width: rect.width, height: rect.height)
+        }()
         let width = min(ceil(bounds.width) + 2, maxWidth)
         let size = CGSize(width: width, height: ceil(bounds.height) + 2)
         coordinator.sizes[maxWidth] = size
