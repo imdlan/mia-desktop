@@ -120,14 +120,31 @@ struct ChatView: View {
 
     private var mainContent: some View {
         VStack(spacing: 0) {
-            // The ⌘E editor keeps the header pills visible (4d); only the
-            // transcript hides while it's open.
-            if store.messages.isEmpty || draftEditorShown {
+            if store.isLoadingConversation {
+                // A history pick decodes detached (see ChatStore.loadConversation),
+                // and the panel must say the pick was received rather than idle on
+                // the outgoing transcript: the pills stay (drag strip + identity),
+                // the transcript area becomes the loading placeholder until the
+                // adopt lands. The animation below crossfades the swap both ways —
+                // the outgoing chat dims out under the dots, and the dots dim out
+                // under the restored transcript's own reveal.
                 pillsRow
                     .padding(12)
                     .background(WindowDragStrip())
+                    .transition(.opacity)
+                ChatLoadingIndicator()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
+            } else if store.messages.isEmpty || draftEditorShown {
+                // The ⌘E editor keeps the header pills visible (4d); only the
+                // transcript hides while it's open.
+                pillsRow
+                    .padding(12)
+                    .background(WindowDragStrip())
+                    .transition(.opacity)
             } else {
                 transcriptZone
+                    .transition(.opacity)
             }
             ComposerView(
                 model: composerModel,
@@ -146,6 +163,9 @@ struct ChatView: View {
                 onClose: onClose
             )
         }
+        // Scoped to the loading flag alone: nothing else this subtree renders
+        // (message ticks, pill hovers) inherits this animation.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: store.isLoadingConversation)
         .background(
             GeometryReader { geometry in
                 Color.clear.preference(key: ContentHeightKey.self, value: geometry.size.height)
@@ -1167,6 +1187,39 @@ private struct ReasoningDisclosure: View {
                     .padding(.bottom, 6)
             }
         }
+    }
+}
+
+/// What the transcript area shows while a picked history conversation decodes:
+/// three accent dots pulsing in a staggered wave — the app's waiting language,
+/// with no label. The pulses are CA-driven repeatForever opacity (the caret
+/// rule), which matters twice here: the main actor stays free while the decode
+/// runs off-thread, and when the adopted transcript's first (heavy) layout pass
+/// does block it, the wave keeps animating on the render server instead of
+/// freezing — which is the whole white-screen fix.
+private struct ChatLoadingIndicator: View {
+    @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
+    @State private var waving = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<3) { index in
+                Circle()
+                    .fill(Theme.color(accentHex))
+                    .frame(width: 7, height: 7)
+                    .opacity(waving ? 0.2 : 1)
+                    .animation(
+                        // The stagger is start-delay only: repeatForever never
+                        // re-applies it, so the phase offset between dots — the
+                        // wave — survives every cycle.
+                        .easeInOut(duration: 0.6)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.18),
+                        value: waving
+                    )
+            }
+        }
+        .onAppear { waving.toggle() }
     }
 }
 

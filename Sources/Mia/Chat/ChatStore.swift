@@ -132,6 +132,22 @@ final class ChatStore: ObservableObject {
         return corpus
     }
 
+    /// True between a history pick dispatching its load and the conversation
+    /// landing (or failing) — drives ChatView's loading placeholder. The decode
+    /// runs detached (a content-heavy transcript — attachment base64 and all —
+    /// took seconds on the main thread, freezing the panel white), so this flag
+    /// is the UI's only signal that the pick was received.
+    @Published private(set) var isLoadingConversation = false
+    /// Guards the detached load's landing: every store re-point (another load,
+    /// newChat, fork, delete of the current or pending conversation) bumps it,
+    /// so a load superseded mid-decode lands as a no-op instead of clobbering
+    /// whatever the user moved on to.
+    private var loadGeneration = 0
+    /// The id an in-flight load will adopt, so deleting THAT conversation (from
+    /// a popover reopened mid-load) cancels it rather than resurrecting a chat
+    /// the user just removed.
+    private var pendingLoadID: UUID?
+
     /// Bumped whenever a STORED conversation replaces the current one (history
     /// pick, launch resume) — as opposed to messages arriving by chat. Drives the
     /// restore choreography of delta 3 (5d): the panel's slower growth curve and
@@ -1014,6 +1030,7 @@ final class ChatStore: ObservableObject {
         // the still-running tail reads `steer` asynchronously, so clearing it
         // here makes that read a no-op.
         steer = nil
+        cancelPendingLoad()
         guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
         // A reply can still be typing itself out here (isStreaming tracks the
         // network turn, not the reveal). Complete it FIRST: the persist() below
@@ -1113,6 +1130,10 @@ final class ChatStore: ObservableObject {
 
     func deleteConversation(_ id: UUID) {
         searchCorpus = nil
+        // An in-flight load of THIS conversation must not resurrect it after
+        // deletion; deleting the current one resets the store below, which
+        // equally invalidates whatever was loading.
+        if id == pendingLoadID || id == conversationID { cancelPendingLoad() }
         ConversationStore.deleteMaterializingChildren(id: id)
         recent = ConversationStore.listRecent()
         if id == conversationID {
@@ -1137,6 +1158,7 @@ final class ChatStore: ObservableObject {
 
     func newChat() {
         stop()
+        cancelPendingLoad()
         // Same reason as fork(at:): the stopped turn's tail reads `steer`
         // asynchronously, so a queued follow-up must not fire into the fresh
         // conversation.
@@ -1153,14 +1175,54 @@ final class ChatStore: ObservableObject {
 
     func loadConversation(_ id: UUID) {
         guard id != conversationID else { return }
+        isLoadingConversation = true
+        loadGeneration += 1
+        pendingLoadID = id
+        let generation = loadGeneration
         stop()
         persist()
-        guard let loaded = ConversationStore.loadResolved(id: id) else {
+        // Detached on purpose: `loadResolved` decodes the whole transcript and
+        // walks the fork chain — seconds for a content-heavy chat, which used
+        // to happen on the main actor and left the panel a frozen white window
+        // until it finished. The placeholder (isLoadingConversation) covers
+        // exactly this window.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = ConversationStore.loadResolved(id: id)
+            await self?.finishLoading(id: id, generation: generation, loaded: loaded)
+        }
+    }
+
+    /// The detached load's landing: adopt (or report the failure) only if
+    /// nothing re-pointed the store while the decode ran.
+    private func finishLoading(
+        id: UUID,
+        generation: Int,
+        loaded: (conversation: Conversation, messages: [ChatMessage], missingParent: Bool)?
+    ) {
+        guard generation == loadGeneration else { return }
+        isLoadingConversation = false
+        pendingLoadID = nil
+        guard let loaded else {
             recent.removeAll { $0.id == id }
             messages.append(ChatMessage(role: .error, text: "Couldn't load that conversation — its file is missing or corrupt."))
             return
         }
+        // A turn started during the decode must not keep writing into the
+        // transcript about to be replaced — the same stop() a synchronous
+        // load ran before adopting.
+        stop()
         adopt(loaded)
+    }
+
+    /// Invalidates an in-flight load. Called by every path that re-points or
+    /// resets the store (newChat, fork, delete), where a late adopt would
+    /// overwrite the user's next move; the generation bump makes the detached
+    /// decode's landing a no-op.
+    private func cancelPendingLoad() {
+        guard pendingLoadID != nil else { return }
+        loadGeneration += 1
+        pendingLoadID = nil
+        isLoadingConversation = false
     }
 
     /// Writes the current conversation to disk (a fork stores only its

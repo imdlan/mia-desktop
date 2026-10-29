@@ -705,6 +705,102 @@ if CommandLine.arguments.contains("--smoke-rerun") {
     }
 }
 
+// History-pick loading (no network, no UI): loadConversation decodes detached,
+// so its state machine needs proving on its own — the placeholder flag flips up
+// at dispatch, the adopt lands asynchronously, the supersede paths (newChat,
+// deleting the pending chat) cancel a late adopt instead of clobbering, and a
+// missing file surfaces the error row rather than a stuck placeholder.
+if CommandLine.arguments.contains("--smoke-history-load") {
+    MainActor.assumeIsolated {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mia-history-load-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        ConversationStore.overrideDirectory = scratch
+        var log = CheckLog()
+
+        /// Spin the main runloop (which services the main queue the detached
+        /// load hops back through) until the condition holds or the deadline
+        /// does — the steer harness's settle loop pattern.
+        @MainActor func settle(
+            _ timeout: TimeInterval, until condition: @escaping () -> Bool
+        ) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+                if condition() { return true }
+            }
+            return condition()
+        }
+
+        /// Runloop time with no condition — for proving a cancelled load NEVER
+        /// does anything: nothing observable changes, so the only assertion
+        /// possible comes after giving its landing a chance to (wrongly) run.
+        @MainActor func pump(_ seconds: TimeInterval) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+        }
+
+        // Constructed BEFORE seeding: init adopts the newest stored file, and
+        // the seeded heavy chat must stay on disk (not on screen) to be loaded.
+        let store = ChatStore(providerStore: ProviderStore(), shortcutStore: ShortcutStore())
+        log.check("starts on an empty chat", store.messages.isEmpty && !store.isLoadingConversation)
+
+        let heavyID = UUID()
+        ConversationStore.save(Conversation(
+            id: heavyID, title: "heavy", updatedAt: Date(),
+            messages: (0..<40).map { index in
+                ChatMessage(
+                    role: index.isMultiple(of: 2) ? .user : .assistant,
+                    text: String(repeating: "x", count: 500)
+                )
+            }
+        ))
+
+        store.loadConversation(heavyID)
+        log.check("placeholder flag set at dispatch", store.isLoadingConversation)
+        log.check("old transcript untouched while decoding", store.conversationID != heavyID)
+        log.check("adopt lands asynchronously",
+              settle(2, until: { !store.isLoadingConversation && store.conversationID == heavyID }))
+        log.check("full transcript resolved", store.messages.count == 40)
+
+        // Supersede: newChat while a load is in flight must win.
+        let otherID = UUID()
+        ConversationStore.save(Conversation(
+            id: otherID, title: "other", updatedAt: Date(),
+            messages: [ChatMessage(role: .user, text: "q")]
+        ))
+        store.loadConversation(otherID)
+        store.newChat()
+        log.check("newChat clears the placeholder", !store.isLoadingConversation)
+        pump(0.3) // let the detached decode land (and be rejected) before judging
+        log.check("cancelled load never adopts",
+              store.conversationID != otherID && store.messages.isEmpty)
+
+        // Deleting the pending conversation cancels its load too — a late adopt
+        // would resurrect the chat the user just removed.
+        let doomedID = UUID()
+        ConversationStore.save(Conversation(
+            id: doomedID, title: "doomed", updatedAt: Date(),
+            messages: [ChatMessage(role: .user, text: "q")]
+        ))
+        store.loadConversation(doomedID)
+        store.deleteConversation(doomedID)
+        log.check("deleting the pending chat cancels", !store.isLoadingConversation)
+        pump(0.3)
+        log.check("deleted chat never adopts", store.conversationID != doomedID)
+
+        // Missing file: the failure path drops the placeholder and surfaces the
+        // error row — never a stuck spinner.
+        store.loadConversation(UUID())
+        log.check("failed load reports and clears",
+              settle(2, until: { !store.isLoadingConversation && store.messages.last?.role == .error }))
+
+        try? FileManager.default.removeItem(at: scratch)
+        log.finish()
+    }
+}
+
 // Steering a streaming reply (no network, no UI): the chip's
 // queue/replace/discard lifecycle, the idle insert (a plain send), and the
 // streaming insert + auto-answer pair — driven directly against the state
