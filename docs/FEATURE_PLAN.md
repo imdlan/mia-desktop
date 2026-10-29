@@ -255,3 +255,26 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-history-load` 扩至 17 项:加载昨日会话→切走→文件时间戳不变、`listRecent` 仍归原日;派生函数四边界(末条消息计时/UI 行不计时/旧记录回退/新会话取当前)。回归:`--smoke-persist`/`--smoke-history`/`--smoke-rerun`/`--smoke-steer`/`--smoke-titling`/`--smoke-export`/`--smoke-recall`/`--smoke-migration`/`--smoke-reasoning`/`--smoke-chat-search` 全过;dist 构建经用户真机验收。
+
+## P18 发送贴底按新增行判定——气泡被输入框遮挡的复发根因(用户反馈)
+
+**背景**:向上滚动阅读(或 ⌘F/timeline 跳转)解除跟随后再发送,新用户气泡落在视口下方被 composer 遮挡、AI 输出全程不跟随。b187777 曾以 `if messages.last?.role == .user` 强制恢复 pin,但 `send()` 在同一次同步调用里追加用户行(`preflight`)与 assistant 占位行(`performTurn`),SwiftUI 的 `onChange(of: messages.count)` 只触发一次且 last 恒为 assistant——该条件在正常发送路径下永不成立,修复从未生效。首轮修复后用户仍复现"气泡只露上边 1/3":另需处理 scrollTo 与行插入 transition、面板动画同帧竞争导致的半途停滚(此后 contentSize 不再变化,几何跟随者不再触发,无重试)。
+
+### 需求
+- R18.1 判定改为新增切片:`onChange(of: count)` 以 old/new 差值取 `messages[old...]`,含 user 行即恢复 `pinnedToBottom`。覆盖全部发送形态(普通 send、retry、空闲 steer 走 send;流中 steer 走 commitSteerInsert 仅追加 user 行同样命中);activity/error 行插入与 Edit 撤回(count 减少)不误触发。
+- R18.2 发送后 150ms 内以 50ms 间隔重申 `scrollTo("bottom")` 锚点(共 3 次):每次在已贴底时为 no-op,不改变向上阅读语义(发送刚刚重新挂起了 pin)。
+- R18.3 新增 `--smoke-pin` 回归:真实 FloatingPanel(PanelController + 玻璃面板 + composer),30 轮长对话恢复、滚顶解除跟随后发送 15 行高气泡,经 AppKit 视图断言发送后与稳定期 bottom distance < 24pt(≈8pt 即贴底;半途停滚会留下数十 pt)。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-pin` PASS(发送后 8pt、稳定期 8pt);`--smoke-reasoning` 回归通过;dist 构建经用户真机验收(多轮对话发送后气泡完整可见、thinking 可见、输出全程贴底)。
+
+## P19 thinking 小窗去滚动条 + 滚轮穿透——消除双滚动条闪烁(用户反馈)
+
+**背景**:thinking 阶段的 `ThinkingScroller` 是嵌在转录里的独立 NSScrollView,且 `hasVerticalScroller + autohidesScrollers`:thinking 文本以 50–150 chunks/s 追加,内容高度在"刚好满/溢出"边界高频抖动,滚动条反复显隐即闪烁;浮现时与转录自身 overlay 滚动条并排出现,且转录因贴底跟随持续滚动其滚动条也在浮现——视觉上双滚动条同跳。附带交互问题:滚轮/触控板悬停小窗时被小窗吞掉而非滚动对话。
+
+### 需求
+- R19.1(用户拍板:方案 A)`PassthroughThinkingScrollView` 子类:永不显示垂直/水平滚动条;`scrollWheel(with:)` 沿响应链上交(`nextResponder?.scrollWheel`),悬停小窗的滚动始终作用于转录。
+- R19.2 小窗维持既有语义:固定高度(折叠 3 行/展开 12 行)自动跟随最新思考,追加增量渲染不变;回看完整思考走 chevron 展开与答案后的 reasoning 折叠面板——小窗内手动回滚随滚动条一并移除。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-reasoning`(小窗高度恒定断言)全过;`--smoke-pin` 回归 PASS;dist 构建经用户真机验收(无闪烁、无双滚动条、悬停小窗滚动作用于对话)。
