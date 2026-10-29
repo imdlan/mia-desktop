@@ -242,3 +242,16 @@
 
 ### 验证(Owner: Orchestrator)
 - 新增 `--smoke-history-load` 10 项:派发即置位、解码期间旧转录不受扰、异步 adopt 落地、完整转录解析(40×500 字符)、newChat 取消且永不 adopt、删除 pending 会话取消、缺失文件落错误行并清态;`--smoke-minsize`/`--smoke-persist`/`--smoke-rerun`/`--smoke-steer`/`--smoke-chat-search` 回归全过;加载动画观感经用户真机验收。
+
+## P17 历史记录时间戳改为内容时间——仅浏览不再移入"今天"(用户反馈)
+
+**背景**:⌘Y 历史弹窗的日期分组里,今天点开昨天的对话后再切走(新对话/点另一条/fork),该条会被移入"今天"分组。根因是 `ChatStore.persist()` 每次写盘都无条件盖 `updatedAt: Date()`,而上述切换路径均会触发 persist;AI 自动命名完成后的 persist 同样虚增时间戳。
+
+### 需求
+- R17.1 时间戳语义(用户拍板):`updatedAt` = 转录中最后一条 user/assistant 消息的 `createdAt`(即用户最后输入或 AI 最后应答的时刻);UI-only 行(`.activity`/`.error`)不参与计时,与 snippet 派生口径一致。派生规则收敛为纯函数 `ChatStore.lastActivityDate(in:fallback:)`。
+- R17.2 回退链:转录消息无时间戳(早于 `ChatMessage.createdAt` 引入的旧记录)→ 回退到 adopt 时该文件磁盘上的 `updatedAt`(新增 `storedUpdatedAt` 状态:adopt 取值,persist 写盘后同步,newChat/deleteConversation 重置);全新对话才用 `Date()`。
+- R17.3 排序配套:persist 后 `recent` 改按 `updatedAt` 重排——时间戳不再必然前进,原"插到首位"会使被浏览过的旧会话压在新会话之上。
+- 附带效果:删除尾部消息(Retry/Edit)后时间随剩余末条回退;fork 分支未发言前继承分叉点时间,发言后随新消息进入当天;auto-title 只改名不再顶置会话。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-history-load` 扩至 17 项:加载昨日会话→切走→文件时间戳不变、`listRecent` 仍归原日;派生函数四边界(末条消息计时/UI 行不计时/旧记录回退/新会话取当前)。回归:`--smoke-persist`/`--smoke-history`/`--smoke-rerun`/`--smoke-steer`/`--smoke-titling`/`--smoke-export`/`--smoke-recall`/`--smoke-migration`/`--smoke-reasoning`/`--smoke-chat-search` 全过;dist 构建经用户真机验收。
