@@ -3692,6 +3692,152 @@ if CommandLine.arguments.contains("--smoke-codex-refresh-coalescing") {
     RunLoop.main.run()
 }
 
+// The send-must-repin scroll law, against the REAL FloatingPanel the app
+// ships (PanelController + glass panel + composer), not a hand-rolled
+// window:   .build/debug/Mia --smoke-pin
+//
+// Reproduces the recurring regression: with the transcript scrolled AWAY
+// from the bottom (the user read upward, following disengaged), a send
+// must re-pin and land the newest user bubble + the streaming row's
+// waiting indicator fully on screen. The bug shape is a scroll that stops
+// part-way — the bubble's top third visible, the rest clipped behind the
+// composer — so the assertion measures the AppKit-visible bottom distance,
+// which is exactly what a half-finished scrollTo leaves behind.
+if CommandLine.arguments.contains("--smoke-pin") {
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: "liquidGlass")
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mia-pin-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        ConversationStore.overrideDirectory = scratch
+
+        // Long enough that the transcript overflows the expanded panel.
+        func turn(_ q: String, _ a: String) -> [ChatMessage] {
+            [ChatMessage(role: .user, text: q), ChatMessage(role: .assistant, text: a)]
+        }
+        let conversationID = UUID()
+        ConversationStore.save(Conversation(
+            id: conversationID, title: "Pin harness", updatedAt: Date(),
+            messages: (0..<30).flatMap { i in
+                turn(
+                    "Question number \(i), phrased long enough that the user bubble wraps to a couple of lines in the panel?",
+                    "Answer number \(i): \(String(repeating: "some reasoned prose here, and then more of it, ", count: 20))end."
+                )
+            }
+        ))
+
+        // A configured openAICompatible provider at a dead host: preflight
+        // passes (user row + assistant placeholder append, the waiting
+        // indicator shows) and the connection failure lands seconds later —
+        // outside the assertion window.
+        let providerStore = ProviderStore()
+        let harnessProvider = Provider(
+            id: UUID(), name: "Pin Harness", baseURL: "https://pin.invalid/v1",
+            isPreset: false, defaultModel: "pin-1"
+        )
+        providerStore.providers = [harnessProvider]
+        providerStore.knownModels = [harnessProvider.id: ["pin-1"]]
+        providerStore.selectedModels = [harnessProvider.id: "pin-1"]
+        providerStore.selectedID = harnessProvider.id
+        SecretStore.set("harness-key", account: harnessProvider.id.uuidString)
+        defer { SecretStore.delete(account: harnessProvider.id.uuidString) }
+
+        let controller = PanelController(providerStore: providerStore, shortcutStore: ShortcutStore())
+        controller.chatStore.loadConversation(conversationID)
+        controller.show()
+
+        func fail(_ message: String) -> Never {
+            print("FAIL: \(message)")
+            exit(1)
+        }
+
+        /// The transcript is the scroll view whose document vastly overflows
+        /// its viewport (the composer's field, if any, is tiny by comparison).
+        func transcriptScrollView() -> NSScrollView? {
+            guard let panel = app.windows.first(where: { $0 is FloatingPanel }) else { return nil }
+            var best: (scroll: NSScrollView, overflow: CGFloat)?
+            func walk(_ view: NSView) {
+                if let scroll = view as? NSScrollView, let document = scroll.documentView {
+                    let overflow = document.bounds.height - scroll.contentView.bounds.height
+                    if overflow > 100, overflow > (best?.overflow ?? 0) {
+                        best = (scroll, overflow)
+                    }
+                }
+                for sub in view.subviews { walk(sub) }
+            }
+            walk(panel.contentView ?? NSView())
+            return best?.scroll
+        }
+
+        /// Points of document below the viewport's bottom edge (AppKit view of
+        /// the same quantity trackingBottomPin watches). ~8 = the transcript's
+        /// bottom padding, i.e. pinned; tens of points = a half-finished scroll.
+        func bottomDistance(_ scroll: NSScrollView) -> CGFloat? {
+            guard let document = scroll.documentView else { return nil }
+            let visible = scroll.contentView.visibleRect
+            return document.isFlipped
+                ? document.bounds.height - visible.maxY
+                : visible.minY
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            MainActor.assumeIsolated {
+                guard controller.chatStore.messages.count == 60 else {
+                    fail("conversation did not restore (messages=\(controller.chatStore.messages.count))")
+                }
+                guard let scroll = transcriptScrollView() else { fail("no overflowing scroll view found") }
+                let restored = bottomDistance(scroll) ?? -1
+                print(String(format: "restored bottom distance = %.1fpt", restored))
+                guard restored < 24 else { fail("restore did not pre-scroll to the bottom") }
+
+                // The user reads upward: following must disengage.
+                scroll.contentView.scroll(to: .zero)
+                scroll.reflectScrolledClipView(scroll.contentView)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    MainActor.assumeIsolated {
+                        let afterScrollUp = bottomDistance(scroll) ?? -1
+                        print(String(format: "after scroll-to-top, bottom distance = %.1fpt", afterScrollUp))
+                        guard afterScrollUp > 100 else { fail("scroll-to-top did not move the transcript") }
+
+                        // Deliberately TALL: the reported shape is a bubble
+                        // whose bottom two-thirds sit below the fold — a
+                        // 15-line bubble is ~300pt, the harshest case for a
+                        // scroll that stops part-way.
+                        let lines = (0..<15).map { "harness line \($0) of a deliberately tall question bubble for the pin regression" }
+                        _ = controller.chatStore.send(lines.joined(separator: "\n"))
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                            MainActor.assumeIsolated {
+                                let sent = bottomDistance(scroll) ?? -1
+                                print(String(format: "after send, bottom distance = %.1fpt", sent))
+                                let okSend = sent < 24
+                                print("send-repins: \(okSend ? "ok" : "FAIL")")
+
+                                // The waiting indicator grows (status line →
+                                // reasoning window); the follow must hold.
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                                    MainActor.assumeIsolated {
+                                        let settled = bottomDistance(scroll) ?? -1
+                                        print(String(format: "settled bottom distance = %.1fpt", settled))
+                                        let okHold = settled < 24
+                                        print(okSend && okHold ? "PASS" : "FAIL (send=\(okSend) hold=\(okHold))")
+                                        exit(okSend && okHold ? 0 : 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        app.run()
+    }
+}
+
 if CommandLine.arguments.contains("--smoke-providers") {
     MainActor.assumeIsolated {
         let app = NSApplication.shared

@@ -483,7 +483,7 @@ struct ChatView: View {
                     showNewMessagesPill = true
                 }
             }
-            .onChange(of: store.messages.count) { _, _ in
+            .onChange(of: store.messages.count) { old, new in
                 // A USER message being appended IS a send — the author's own
                 // action. Whatever the pin's current state (disengaged by an
                 // upward read, a ⌘F jump, a timeline jump), sending must
@@ -491,7 +491,32 @@ struct ChatView: View {
                 // viewport, half-hidden behind the composer, and neither this
                 // gate nor the text-tick one follows the reply (the reported
                 // "bubble covered by the input" regression).
-                if store.messages.last?.role == .user { pinnedToBottom = true }
+                //
+                // Diff the APPENDED SLICE, not `last?.role`: send() appends the
+                // user row AND the empty assistant placeholder in one
+                // synchronous turn, so this onChange fires once with count +2
+                // and an ASSISTANT row last — the old `last?.role == .user`
+                // test never fired on the normal send path (why the regression
+                // survived its first fix). preflight appends the user row on
+                // every send shape (send, retry, idle-steer, mid-stream steer).
+                if new > old, old < store.messages.count,
+                   store.messages[old...].contains(where: { $0.role == .user }) {
+                    pinnedToBottom = true
+                    // A send's first scrollTo races the row-insert
+                    // transitions and the panel's own animations; one call
+                    // can stop short with nothing left to re-fire it
+                    // (contentSize doesn't change again, so the geometry
+                    // follower stays silent). Re-assert the pin over the
+                    // next few ticks — each is a no-op once actually at the
+                    // bottom, and none run while the user reads upward (the
+                    // send just re-engaged the pin).
+                    Task { @MainActor in
+                        for _ in 0..<3 {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    }
+                }
                 if pinnedToBottom {
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 } else {
