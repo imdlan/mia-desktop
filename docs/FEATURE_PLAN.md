@@ -230,3 +230,15 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-clip` 0 失配;`--smoke-typing`/`--smoke-scroll`/`--smoke-find`/`--smoke-rerun`/`--smoke-input`/`--smoke-history` 回归全过(`--smoke-pasteable`/`--smoke-search`/`--smoke-file` 失败为预先存在的环境问题:缺真实 API key / 裸二进制缺 bundle,与 0.6.2 对照二进制一致);用户真机确认末行无需点击即可见。
+
+## P16 历史记录加载态——加载动画替代主窗口白屏(用户反馈)
+
+**背景**:⌘Y 历史弹窗点开一条内容多的对话后,主界面数秒无反馈才出现内容。根因是 `ChatStore.loadConversation` 在主线程同步执行 `ConversationStore.loadResolved`:大转录(长文本、base64 附件、fork 链解析)解码即阻塞主线程数秒;此后新转录的首个 SwiftUI 布局(非 lazy VStack 全量建行)再阻塞一次,而恢复编排(`transcriptRevealed`)在布局完成前持续隐藏内容——两段阻塞期间主窗口即"白屏"。
+
+### 需求
+- R16.1 解码移出主线程:`loadConversation` 派发 `Task.detached` 执行 `loadResolved`,落地经 `finishLoading` 回主 actor adopt(或失败报错);加载窗口由新增 `@Published isLoadingConversation` 驱动 UI。
+- R16.2 世代守卫:所有重指向 store 的路径(newChat、fork、deleteConversation 命中当前或 pending 会话、再次 loadConversation)bump `loadGeneration` 并经 `cancelPendingLoad()` 清态,在途加载落地即 no-op——被取代的加载不覆盖用户后续操作,已删除的目标会话不被"复活",失败路径(文件缺失)落错误行且不卡加载态;落地前若有新回合开跑,先 `stop()` 再 adopt,与同步版语义一致。
+- R16.3 加载占位(用户拍板:纯动画、无文字):`ChatView.mainContent` 在 `isLoadingConversation` 期间以三点波浪动画替换转录区,pills 保留(拖拽条与身份);动画为 accent 色、CA 驱动的 repeatForever opacity(错峰仅由起始 delay 决定,repeat 不重置相位)——主线程被首个重布局阻塞时由 render server 续跑,这正是白屏修复的最后一环。出现/消失经 `.transition(.opacity)` + 仅绑定该标志的 `.animation` 双向淡入淡出,Reduce Motion 下瞬时切换。
+
+### 验证(Owner: Orchestrator)
+- 新增 `--smoke-history-load` 10 项:派发即置位、解码期间旧转录不受扰、异步 adopt 落地、完整转录解析(40×500 字符)、newChat 取消且永不 adopt、删除 pending 会话取消、缺失文件落错误行并清态;`--smoke-minsize`/`--smoke-persist`/`--smoke-rerun`/`--smoke-steer`/`--smoke-chat-search` 回归全过;加载动画观感经用户真机验收。
