@@ -1340,6 +1340,21 @@ struct WaitingIndicator: View {
     }
 }
 
+/// A scroll view that never shows a scroller and hands scroll gestures up
+/// the responder chain. The transcript is the only thing meant to scroll:
+/// a live-thinking window flashing its own autohiding scroller (content
+/// crossing the just-full/overflowing boundary many times a second) next
+/// to the transcript's overlay scroller read as TWO jumping scrollbars, and
+/// a wheel over the window used to vanish into it instead of scrolling
+/// the chat. The window follows its text's tail itself; reading back the
+/// full thinking is what the chevron expansion (12 lines) and the settled
+/// reasoning disclosure are for.
+final class PassthroughThinkingScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 /// A fixed-height window onto text that is still arriving, which follows the
 /// end as it grows.
 ///
@@ -1379,11 +1394,14 @@ struct ThinkingScroller: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.setAccessibilityLabel("Model thinking")
 
-        let scroll = NSScrollView()
+        let scroll = PassthroughThinkingScrollView()
         scroll.documentView = textView
         scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
+        // No scroller, ever — see PassthroughThinkingScrollView. The window
+        // follows its tail on its own; a flashing micro-scroller beside the
+        // transcript's overlay one was the double-scrollbar complaint.
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
         // Drops fall through to the panel-wide attachment target.
         textView.unregisterDraggedTypes()
         return scroll
