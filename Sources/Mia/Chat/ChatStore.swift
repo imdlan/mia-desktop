@@ -112,6 +112,12 @@ final class ChatStore: ObservableObject {
     }
     @Published private(set) var recent: [ConversationMeta] = []
     private(set) var conversationID = UUID()
+    /// The current conversation's last PERSISTED `updatedAt`, straight off the
+    /// adopted file. persist() derives the stamp from the transcript's last
+    /// message, but a conversation whose messages predate `ChatMessage.createdAt`
+    /// has nothing to derive from — falling back to this keeps a read-only
+    /// browse from moving an old chat into Today. nil for a fresh conversation.
+    private var storedUpdatedAt: Date?
 
     /// Cross-chat search corpus, built once and reused until the stored set
     /// changes. It lives here rather than in the history popover because this is
@@ -270,6 +276,7 @@ final class ChatStore: ObservableObject {
         steer = nil // loading another conversation must not answer its follow-up
         conversationID = loaded.conversation.id
         messages = loaded.messages
+        storedUpdatedAt = loaded.conversation.updatedAt
         if loaded.missingParent {
             // Broken chain: continue as a standalone conversation, and say so.
             forkParentID = nil
@@ -1148,6 +1155,7 @@ final class ChatStore: ObservableObject {
             sharedPrefixCount = 0
             customTitle = nil
             titleAttempted = false
+            storedUpdatedAt = nil
         } else if forkParentID == id {
             // Our file was just materialized as standalone; align memory with it.
             forkParentID = nil
@@ -1171,6 +1179,7 @@ final class ChatStore: ObservableObject {
         sharedPrefixCount = 0
         customTitle = nil
         titleAttempted = false
+        storedUpdatedAt = nil
     }
 
     func loadConversation(_ id: UUID) {
@@ -1235,13 +1244,14 @@ final class ChatStore: ObservableObject {
         let conversation = Conversation(
             id: conversationID,
             title: title,
-            updatedAt: Date(),
+            updatedAt: Self.lastActivityDate(in: messages, fallback: storedUpdatedAt),
             messages: Array(messages.dropFirst(sharedPrefixCount)),
             parentID: forkParentID,
             forkMessageID: forkMessageID,
             autoTitled: customTitle != nil
         )
         ConversationStore.save(conversation)
+        storedUpdatedAt = conversation.updatedAt
         recent.removeAll { $0.id == conversationID }
         recent.insert(ConversationMeta(
             id: conversationID,
@@ -1250,6 +1260,24 @@ final class ChatStore: ObservableObject {
             snippet: ConversationMeta.snippet(for: messages),
             isFork: forkParentID != nil
         ), at: 0)
+        // The stamp no longer necessarily advances (a read-only switch persists
+        // the OLD stamp), so slot 0 is no longer guaranteed newest — the list
+        // must be re-sorted or a browsed-but-unchanged chat sits above newer
+        // ones in the popover.
+        recent.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// The conversation's clock for the history list: the LAST message's
+    /// timestamp, not the moment of writing. persist() fires on every switch
+    /// away (loadConversation, newChat, fork), so stamping "now" there moved a
+    /// merely-browsed chat into Today; deriving from the transcript keeps the
+    /// stamp at the user's last input or the assistant's last reply. UI-only
+    /// rows (`.activity`/`.error`) carry no clock and are skipped, like the
+    /// snippet derivation. Fallbacks, in order: the adopted file's stored stamp
+    /// (transcripts written before `ChatMessage.createdAt` existed), else now.
+    nonisolated static func lastActivityDate(in messages: [ChatMessage], fallback: Date?) -> Date {
+        let lastStamped = messages.last { $0.role == .user || $0.role == .assistant }?.createdAt
+        return lastStamped ?? fallback ?? Date()
     }
 
     /// First user message → display title: flattened to one line, cut at 40

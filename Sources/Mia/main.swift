@@ -796,6 +796,44 @@ if CommandLine.arguments.contains("--smoke-history-load") {
         log.check("failed load reports and clears",
               settle(2, until: { !store.isLoadingConversation && store.messages.last?.role == .error }))
 
+        // The history stamp tracks the TRANSCRIPT, not the file write. Loading
+        // an old chat and switching away re-persists it, and that write used to
+        // stamp "now" — moving a merely-browsed chat into Today's group.
+        let yesterday = Date().addingTimeInterval(-86400)
+        let staleID = UUID()
+        ConversationStore.save(Conversation(
+            id: staleID, title: "stale", updatedAt: yesterday,
+            messages: [ChatMessage(role: .user, text: "old question")]
+        ))
+        store.loadConversation(staleID)
+        log.check("stale chat adopts",
+              settle(2, until: { store.conversationID == staleID }))
+        store.newChat() // the switch-away that used to restamp it
+        log.check("browse does not restamp the file",
+              abs(ConversationStore.load(id: staleID)?.updatedAt.timeIntervalSince(yesterday) ?? 1) < 1)
+        log.check("popover listing keeps the browsed chat in its own day",
+              ConversationStore.listRecent().contains { meta in
+                  meta.id == staleID && abs(meta.updatedAt.timeIntervalSince(yesterday)) < 1
+              })
+
+        // Pure derivation checks: the stamp is the last user/assistant
+        // message's own clock; UI-only rows never set it; an unstamped
+        // transcript falls back to the adopted file's stamp; a fresh
+        // conversation starts at now.
+        let t0 = Date(timeIntervalSinceReferenceDate: 0)
+        log.check("stamp = last message clock",
+              ChatStore.lastActivityDate(in: [
+                  ChatMessage(role: .user, text: "q", createdAt: t0),
+                  ChatMessage(role: .assistant, text: "r", createdAt: t0.addingTimeInterval(5)),
+                  ChatMessage(role: .activity, text: "tool")
+              ], fallback: nil) == t0.addingTimeInterval(5))
+        log.check("UI rows never set the stamp",
+              ChatStore.lastActivityDate(in: [ChatMessage(role: .activity, text: "tool")], fallback: yesterday) == yesterday)
+        log.check("unstamped transcript falls back to the stored stamp",
+              ChatStore.lastActivityDate(in: [ChatMessage(role: .user, text: "legacy")], fallback: yesterday) == yesterday)
+        log.check("fresh conversation stamps now",
+              ChatStore.lastActivityDate(in: [], fallback: nil) >= Date().addingTimeInterval(-1))
+
         try? FileManager.default.removeItem(at: scratch)
         log.finish()
     }
