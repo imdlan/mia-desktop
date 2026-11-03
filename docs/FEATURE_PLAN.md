@@ -334,3 +334,13 @@
 
 ### 验证(Owner: Orchestrator)
 - PIL 像素测量 `--shot timeline`:刻度 pitch 32→16px(2x 渲染,即 16→8pt)、宽 27→18px(14→9pt);`swift build` 零 error。真机密度观感由用户验收。
+
+## P25 时间线密度回调至 12pt(用户反馈:P24 8pt 过密影响点击)
+
+**背景**:P24 的 8pt 用户实测过密——点击目标(=最近刻度解析的 pitch)太小。定档 12pt:比 8pt 大 50% 便于点击,仍比最初 20pt 紧凑 40%,~40 轮内不触发压缩。
+
+### 需求
+- R25.1 默认度量:行 6→**8**、间距 2→**4**(pitch 8→**12pt**);bar 宽 9pt 与高度 3→5 保持(P24 值);压缩阶梯结构不变,仅默认档上移(gap 4→1 连续滑降 → 行 8→3.5 → 兜底 available/count)。
+
+### 验证(Owner: Orchestrator)
+- PIL 实测 `--shot timeline` 刻度 pitch 24px(2x,=12pt);`swift build` 零 error;真机点击观感由用户验收。

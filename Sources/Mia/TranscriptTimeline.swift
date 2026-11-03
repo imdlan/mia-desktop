@@ -134,10 +134,11 @@ struct TranscriptTimeline: View {
 
     /// Metrics resolved from the real container height. The ladder compresses
     /// in three stages before giving up any height at all:
-    /// 1. defaults — row 6 / gap 2 (8pt pitch, ruler-density: the column is a
-    ///    marginal overview, not content, so ~60 turns fit uncompressed);
-    /// 2. gap-only — gap slides 2 → 1 with the row still 6;
-    /// 3. row-only — gap pinned at 1, row shrinks 6 → 3.5, and the bar thins
+    /// 1. defaults — row 8 / gap 4 (12pt pitch; ~40 turns fit uncompressed,
+    ///    and the 12pt pitch keeps each bar's click target comfortably
+    ///    larger than the ruler-density 8pt experiment it replaced);
+    /// 2. gap-only — gap slides 4 → 1 with the row still 8;
+    /// 3. row-only — gap pinned at 1, row shrinks 8 → 3.5, and the bar thins
     ///    3 → 2 once rows drop under 4.5pt so the capsule never fills the row;
     /// 4. beyond the floors — pitch stays exactly `available / count` (split
     ///    75/25 row/gap, bar at its 2pt floor), so the column mathematically
@@ -155,8 +156,8 @@ struct TranscriptTimeline: View {
             return CGFloat(count) * rowHeight + CGFloat(count - 1) * gap
         }
 
-        static let defaultRowHeight: CGFloat = 6
-        static let defaultGap: CGFloat = 2
+        static let defaultRowHeight: CGFloat = 8
+        static let defaultGap: CGFloat = 4
         static let idleBarHeight: CGFloat = 3
         static let minRowHeight: CGFloat = 3.5
         static let minGap: CGFloat = 1
@@ -221,7 +222,7 @@ struct TranscriptTimeline: View {
         let hoveredHere = hovered == question.id
         // Height grows barHeight → barHeight + 2, clamped to the row pitch so
         // a popped bar can never overlap its neighbors in a compressed column
-        // (never engages at the 8pt default — 5pt max in an 8pt pitch; the
+        // (never engages at the 12pt default — 5pt max in a 12pt pitch; the
         // 9→15pt width taper and the accent tint keep hover unmistakable at
         // any density). Widths stay on one right axis, so only height can
         // collide.
