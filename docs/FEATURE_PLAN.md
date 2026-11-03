@@ -324,3 +324,13 @@
 
 ### 验证(Owner: Orchestrator)
 - `swift build` 零 error;`--shot timeline` 前后截图 5/30/80 轮三档(80 轮列高 467pt ≤ 容器、逐根可辨,30 轮旧版 600pt 已溢出不可见);observer 读图确认;`--smoke-pin`/`--smoke-typewriter`/`--smoke-steer` 回归全过。
+
+## P24 时间线密度再收紧(用户反馈:P23 默认 20% 收紧观感不足)
+
+**背景**:P23 后默认 pitch 16pt 用户实测「看不出变化」。用户拍板:横线缩短 1/3、垂直间距减半——时间线是边缘概览条而非内容,高密度成立,且间距减半后 ~60 轮内完全不触发压缩。
+
+### 需求
+- R24.1 默认度量:行 12→**6**、间距 4→**2**(pitch 16→**8pt**);bar 宽 14→**9**(hover 渐宽 22→15,+6 锥形);bar 高 3→5 不变(5 < 8pt pitch,钳制默认不触发)。阶梯下限随降:minGap 2→1、minRow 6→3.5、bar 变细阈值 行<9→<4.5;兜底档不变(pitch=available/count,75/25,bar 钉 2)。
+
+### 验证(Owner: Orchestrator)
+- PIL 像素测量 `--shot timeline`:刻度 pitch 32→16px(2x 渲染,即 16→8pt)、宽 27→18px(14→9pt);`swift build` 零 error。真机密度观感由用户验收。
