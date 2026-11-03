@@ -904,7 +904,7 @@ if CommandLine.arguments.contains("--smoke-steer") {
         log.check("queueing never touches ↑ recall", PromptHistory.entries.isEmpty,
               "entries=\(PromptHistory.entries)")
 
-        _ = store.insertSteer(id: store.steers[0].id)
+        store.insertSteer(id: store.steers[0].id)
         log.check("idle insert asks its question",
               store.messages.first?.role == .user && store.messages.first?.text == "first",
               "roles=\(store.messages.map(\.role))")
