@@ -839,10 +839,12 @@ if CommandLine.arguments.contains("--smoke-history-load") {
     }
 }
 
-// Steering a streaming reply (no network, no UI): the chip's
-// queue/replace/discard lifecycle, the idle insert (a plain send), and the
-// streaming insert + auto-answer pair — driven directly against the state
-// machine, which is why the steer API doesn't gate on isStreaming.
+// Steering a streaming reply (no network, no UI): the chip stack's
+// queue/stack/discard lifecycle, the idle insert (a plain send), the
+// streaming insert of ONE chip while the rest stay parked, and the turn-end
+// sweep that commits everything still queued and answers it in one turn —
+// driven directly against the state machine, which is why the steer API
+// doesn't gate on isStreaming.
 if CommandLine.arguments.contains("--smoke-steer") {
     MainActor.assumeIsolated {
         let scratch = FileManager.default.temporaryDirectory
@@ -856,7 +858,7 @@ if CommandLine.arguments.contains("--smoke-steer") {
         // domain and restore it before finish() exits.
         let touchedKeys = [
             "providersJSON", "selectedProviderID", "knownModelsJSON", "selectedModelsJSON",
-            "knownModelEffortsJSON", "defaultModelEffortsJSON", "selectedModelEffortsJSON",
+            "modelEffortsJSON", "defaultModelEffortsJSON", "selectedModelEffortsJSON",
             "modelCapabilitiesJSON", "capabilityExceptionsJSON", "pdfPassThroughJSON", "promptHistory",
         ]
         let savedDefaults = touchedKeys.map { UserDefaults.standard.object(forKey: $0) }
@@ -885,30 +887,37 @@ if CommandLine.arguments.contains("--smoke-steer") {
         keylessStore.selectedID = keyless.id
         let store = ChatStore(providerStore: keylessStore, shortcutStore: ShortcutStore())
 
-        // The chip is one replaceable slot.
-        log.check("queue parks a pending chip",
-              store.queueSteer("first") && store.steerPendingText == "first",
-              "pending=\(String(describing: store.steerPendingText))")
-        log.check("a second queue replaces the chip",
-              store.queueSteer("second") && store.steerPendingText == "second",
-              "pending=\(String(describing: store.steerPendingText))")
-        store.discardSteer()
-        log.check("discard clears the chip", store.steer == nil)
+        // The chips stack in queue order — multiple follow-ups, not one slot.
+        log.check("queues stack in order",
+              store.queueSteer("first") && store.queueSteer("second")
+                  && store.steers.map(\.text) == ["first", "second"],
+              "queued=\(store.steers.map(\.text))")
+        log.check("a third queue appends (no replace)",
+              store.queueSteer("third") && store.steers.map(\.text) == ["first", "second", "third"],
+              "queued=\(store.steers.map(\.text))")
+        store.discardSteer(id: store.steers[1].id)
+        log.check("discard removes just that chip",
+              store.steers.map(\.text) == ["first", "third"],
+              "queued=\(store.steers.map(\.text))")
         log.check("blank queue is refused", !store.queueSteer("   "))
+        log.check("unknown id is refused", !store.commitSteerInsert(id: UUID()))
         log.check("queueing never touches ↑ recall", PromptHistory.entries.isEmpty,
               "entries=\(PromptHistory.entries)")
 
-        _ = store.queueSteer("idle question")
-        store.insertSteer()
+        _ = store.insertSteer(id: store.steers[0].id)
         log.check("idle insert asks its question",
-              store.messages.first?.role == .user && store.messages.first?.text == "idle question",
+              store.messages.first?.role == .user && store.messages.first?.text == "first",
               "roles=\(store.messages.map(\.role))")
         log.check("idle insert shows the explicit error", store.messages.last?.role == .error,
               "roles=\(store.messages.map(\.role))")
-        log.check("idle insert consumes the chip", store.steer == nil)
+        log.check("idle insert consumes just that chip",
+              store.steers.map(\.text) == ["third"],
+              "queued=\(store.steers.map(\.text))")
         log.check("idle insert records ↑ recall exactly once",
-              PromptHistory.entries.filter { $0 == "idle question" }.count == 1,
+              PromptHistory.entries.filter { $0 == "first" }.count == 1,
               "entries=\(PromptHistory.entries)")
+        store.discardSteer(id: store.steers[0].id)
+        log.check("the idle queue empties", store.steers.isEmpty)
 
         // The streaming branch, offline: port 9 (discard) refuses connections on
         // the loopback, so turns start but never reach a server. Its own scratch
@@ -930,40 +939,58 @@ if CommandLine.arguments.contains("--smoke-steer") {
         log.check("root turn is streaming",
               streaming.send("root question") && streaming.isStreaming,
               "isStreaming=\(streaming.isStreaming)")
-        _ = streaming.queueSteer("follow up")
-        log.check("insert commits the question under the stream",
-              streaming.commitSteerInsert()
+        _ = streaming.queueSteer("follow up one")
+        _ = streaming.queueSteer("follow up two")
+        log.check("two chips park during the stream",
+              streaming.steers.map(\.text) == ["follow up one", "follow up two"],
+              "queued=\(streaming.steers.map(\.text))")
+        log.check("insert commits that chip under the stream",
+              streaming.commitSteerInsert(id: streaming.steers[0].id)
                   && streaming.messages.last?.role == .user
-                  && streaming.messages.last?.text == "follow up",
+                  && streaming.messages.last?.text == "follow up one",
               "roles=\(streaming.messages.map(\.role))")
-        log.check("committed follow-up is in the inserted state",
-              streaming.steer != nil && streaming.steerPendingText == nil)
-        log.check("inserted follow-up blocks retry", !streaming.canRerunLastTurn)
-        log.check("auto-answer starts the follow-up turn",
-              streaming.autoAnswerPendingSteer()
-                  && streaming.steer == nil
-                  && streaming.messages.last?.role == .assistant
-                  && streaming.isStreaming,
-              "roles=\(streaming.messages.map(\.role))")
-        streaming.stop()
+        log.check("the other chip stays parked",
+              streaming.steers.map(\.text) == ["follow up two"],
+              "queued=\(streaming.steers.map(\.text))")
+        log.check("committed follow-ups block retry", !streaming.canRerunLastTurn)
         // Let the failed tails land: a runloop wait, not Thread.sleep (the tails
-        // are main-actor code that needs this very thread), and a poll rather
-        // than a fixed sleep (the refused connection's error event surfaces
-        // through URLSession on its own schedule).
+        // are main-actor code that needs this very thread), and stable-poll
+        // rather than a fixed sleep — the root turn's tail commits the parked
+        // chip and starts the answer turn, whose own tail must also settle.
         var settled = false
+        var stablePolls = 0
+        var lastCount = -1
         var waited = 0.0
-        while !settled, waited < 5 {
+        while !settled, waited < 8 {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
             waited += 0.05
-            settled = !streaming.isStreaming
+            if !streaming.isStreaming, streaming.steers.isEmpty, streaming.messages.count == lastCount {
+                stablePolls += 1
+            } else {
+                stablePolls = 0
+            }
+            lastCount = streaming.messages.count
+            settled = stablePolls >= 3
         }
         log.check("the failed tails land", settled, "waited=\(waited)s")
+        log.check("the parked chip fires at turn end",
+              streaming.messages.filter { $0.role == .user }.map(\.text)
+                  == ["root question", "follow up one", "follow up two"],
+              "users=\(streaming.messages.filter { $0.role == .user }.map(\.text))")
+        log.check("one answer turn covers every committed question",
+              streaming.messages.filter { $0.role == .error }.count == 2,
+              "rows=\(streaming.messages.map(\.role))")
+        log.check("the chip queue is spent", streaming.steers.isEmpty)
+        log.check("each committed follow-up reached ↑ recall exactly once",
+              PromptHistory.entries.filter { $0 == "follow up one" || $0 == "follow up two" }.count == 2,
+              "entries=\(PromptHistory.entries)")
         log.check("retry frees up once the queue is spent", streaming.canRerunLastTurn)
 
         // A queued follow-up never survives into a fresh chat.
-        _ = streaming.queueSteer("leftover")
+        _ = streaming.queueSteer("leftover one")
+        _ = streaming.queueSteer("leftover two")
         streaming.newChat()
-        log.check("newChat drops the queue", streaming.steer == nil)
+        log.check("newChat drops the whole queue", streaming.steers.isEmpty)
 
         restoreDefaults()
         try? FileManager.default.removeItem(at: scratch)

@@ -278,3 +278,16 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-reasoning`(小窗高度恒定断言)全过;`--smoke-pin` 回归 PASS;dist 构建经用户真机验收(无闪烁、无双滚动条、悬停小窗滚动作用于对话)。
+
+## P20 Steer 多条队列——chip 堆叠 + 回合结束自动入列(用户需求)
+
+**背景**:P11 的单槽设计里,排队 chip 在回合结束后原样滞留输入框上方,永不进入对话(用户期望"上一轮结束后应插入");且一条追问就得一条条操作。用户拍板:支持多条,按先后排列。
+
+### 需求
+- R20.1 `ChatStore.SteerDraft(id/text/attachments)` 数组 `steers` 取代单槽 `SteerState`;`queueSteer` **追加**不替换;`discardSteer(id:)`/`insertSteer(id:)` 按 id 独立操作;`insertedSteerCount` 计数已提交待答(取代 `.inserted` 槽,`lastUserIndex` 门控随之改为 count>0——wireText 槽位自 P11 起未参与作答,performTurn 始终从 messages 重建,删除)。
+- R20.2 streamTask 尾部升级:真回合结束(含 Stop)先 `commitQueuedSteers()` 把仍排队的 chip **按入队序**全部提交进转录(preflight 失败即错误行),再 `autoAnswerPendingSteer()` 以**一个**后续 turn 覆盖作答全部已提交问题。
+- R20.3 chip UI 堆叠:VStack 按入队序(最早在最上、最新贴输入框),每条独立 ✕/↑;中间 chip 全圆角 10,最末一条保持顶圆角/底直角贴输入框(P11.3 单条视觉不变);动画 value 改 `steers.map(\.id)`。
+- R20.4 清理点(adopt/fork/newChat/deleteConversation)收敛为 `clearSteers()`(steers+count 一并清);PromptHistory 语义不变:入队不记录,提交(手动或自动)各记录一次。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-steer` 重写为 23 项:多条堆叠/按 id 丢弃/未知 id 拒绝/空闲插入仅消费自身;流中单条提交其余保留;**回合结束自动提交 + 恰好一个作答 turn**(error 行计数=2 证明合答);newChat 清空队列。`--smoke-rerun`/`--smoke-persist`/`--smoke-history-load` 回归全过;多条 chip 视觉人工验收。

@@ -315,11 +315,11 @@ struct ComposerView: View {
     @ObservedObject var providerStore: ProviderStore
     let shortcutStore: ShortcutStore
     let isStreaming: Bool
-    /// The pending steer chip's text; nil hides the chip (an inserted
-    /// follow-up is already in the transcript and shows no chip).
-    let steerQueued: String?
-    let onSteerInsert: () -> Void
-    let onSteerDiscard: () -> Void
+    /// The queued steer chips, oldest first — nil-free: an empty array hides
+    /// the stack (inserted follow-ups are already in the transcript).
+    let steers: [ChatStore.SteerDraft]
+    let onSteerInsert: (UUID) -> Void
+    let onSteerDiscard: (UUID) -> Void
     /// Parks draft+attachments as the pending chip while a reply streams.
     let onQueue: (String, [Attachment]) -> Bool
     let focusBump: Int
@@ -358,11 +358,11 @@ struct ComposerView: View {
                 attachCard
                     .transition(.opacity)
             }
-            // spacing 0: the chip's square bottom corners sit flush on the
-            // card's top edge, so chip + field read as one surface.
+            // spacing 0: the chip stack's square bottom corners sit flush on
+            // the card's top edge, so chips + field read as one surface.
             VStack(spacing: 0) {
-                if steerQueued != nil {
-                    steerChip
+                if !steers.isEmpty {
+                    steerChips
                         .padding(.horizontal, 24)
                         .transition(.opacity)
                 }
@@ -380,7 +380,7 @@ struct ComposerView: View {
         .animation(.easeOut(duration: 0.12), value: completionCandidates.isEmpty)
         .animation(.easeOut(duration: 0.12), value: model.pendingAttachments.count)
         .animation(.easeOut(duration: 0.12), value: model.attachNotice)
-        .animation(.easeOut(duration: 0.12), value: steerQueued)
+        .animation(.easeOut(duration: 0.12), value: steers.map(\.id))
         // Capsule ↔ editor is ONE surface morphing (4d); under Reduce Motion the
         // geometry snaps and only the chrome crossfade remains.
         .animation(
@@ -421,21 +421,30 @@ struct ComposerView: View {
         }
     }
 
-    // MARK: - Steer chip
+    // MARK: - Steer chips
 
-    /// A follow-up parked while the reply below is still streaming: one slot
-    /// (a new Enter replaces it), ✕ drops it, ↑ commits it under the streaming
-    /// row to be answered when the reply finishes. Same muted fill as the
-    /// attachment chips; rounded on top, flush with the field below.
-    private var steerChip: some View {
+    /// Follow-ups parked while the reply below is still streaming, stacked in
+    /// queue order (oldest on top, newest flush with the field). Each row: ✕
+    /// drops it, ↑ commits it under the streaming row to be answered when the
+    /// reply finishes. Same muted fill as the attachment chips; every chip is
+    /// rounded except the last, which sits flush on the field below.
+    private var steerChips: some View {
+        VStack(spacing: 2) {
+            ForEach(steers) { draft in
+                steerChip(draft, flushWithField: draft.id == steers.last?.id)
+            }
+        }
+    }
+
+    private func steerChip(_ draft: ChatStore.SteerDraft, flushWithField: Bool) -> some View {
         HStack(spacing: 8) {
-            Text(steerQueued ?? "")
+            Text(draft.text)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: onSteerDiscard) {
+            Button(action: { onSteerDiscard(draft.id) }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -444,7 +453,7 @@ struct ComposerView: View {
             }
             .buttonStyle(.plain)
             .help("Discard this follow-up")
-            Button(action: onSteerInsert) {
+            Button(action: { onSteerInsert(draft.id) }) {
                 Image(systemName: "arrow.up.to.line")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -458,10 +467,12 @@ struct ComposerView: View {
         .padding(.vertical, 6)
         .background(
             Color.primary.opacity(0.06),
-            in: UnevenRoundedRectangle(
-                cornerRadii: RectangleCornerRadii(topLeading: 10, bottomLeading: 0, bottomTrailing: 0, topTrailing: 10),
-                style: .continuous
-            )
+            in: flushWithField
+                ? AnyShape(UnevenRoundedRectangle(
+                    cornerRadii: RectangleCornerRadii(topLeading: 10, bottomLeading: 0, bottomTrailing: 0, topTrailing: 10),
+                    style: .continuous
+                ))
+                : AnyShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         )
     }
 
@@ -860,9 +871,9 @@ struct ComposerView: View {
     private func submit() {
         guard canSend else { return }
         if isStreaming {
-            // Steering: Enter while a reply streams parks the draft as the
-            // chip above the field instead of sending. A second Enter
-            // replaces it (the store's queue is one slot).
+            // Steering: Enter while a reply streams parks the draft as a chip
+            // above the field instead of sending. Each Enter APPENDS to the
+            // stack (oldest first, newest flush with the field).
             if onQueue(draft, model.pendingAttachments) {
                 draft = ""
                 recall = nil
