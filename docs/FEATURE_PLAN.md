@@ -312,3 +312,15 @@
 
 ### 验证(Owner: Orchestrator)
 - dist 包内 `--smoke-steer` → exit 70 拒绝且零 defaults 写入;拷出包外 → 23/23 PASS;debug 全套 harness 回归不受影响;数据恢复经用户确认后执行。
+
+## P23 时间线间距压缩 + 溢出防御(用户需求)
+
+**背景**:右缘问题时间线原 `gap` 公式按「bar 高 3pt」预算 300pt 上限,与真实每行 14pt 行高脱节:20 轮 ≈394pt 仍用 6pt 间距,49 轮公式才介入而实际仍 840pt——长对话直接占满/超出转录区垂直高度。
+
+### 需求
+- R23.1 默认度量收紧:行高 14→12、间距 6→4(pitch 20→16pt);hover 放大 bar 高按 pitch 钳制(`min(bar+2m, max(bar, pitch))`),极小 pitch 下不越行碰撞,默认 pitch 不触发、手感不变。
+- R23.2 真实容器高度驱动的压缩阶梯(`Metrics.resolve`):body 顶部 GeometryReader 读转录 overlay 高度,扣 12pt 上下留白后按四档下行——默认(12/4)→ 仅压间距(4→2,行 12)→ 压行高(12→6,行 <9 时 bar 3→2)→ 兜底 pitch 严格 = `available/count`(75/25 分行/距,bar 钉 2pt),**任意轮数列高 ≤ 容器**。bar 中心一律 `rowHeight/2 + i*pitch`(`nearestQuestion`/`tooltipOffsetY`/`magnification` 三处去硬编码 7)。
+- R23.3 交互挂点修正:opacity/hover 追踪条/tooltip overlay 必须挂在**列尺寸** frame 上、全尺寸居中 frame 放最后——否则追踪 NSView 铺满整个转录区,吞正文点击且指针 y 与列顶错位(截图 harness 验不出交互回归,代码审查发现)。
+
+### 验证(Owner: Orchestrator)
+- `swift build` 零 error;`--shot timeline` 前后截图 5/30/80 轮三档(80 轮列高 467pt ≤ 容器、逐根可辨,30 轮旧版 600pt 已溢出不可见);observer 读图确认;`--smoke-pin`/`--smoke-typewriter`/`--smoke-steer` 回归全过。

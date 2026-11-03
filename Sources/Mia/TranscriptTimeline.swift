@@ -18,6 +18,14 @@ import SwiftUI
 ///
 /// The bars live in the trailing margin the bubbles never enter (bubble max
 /// width is 78% of the transcript), so the hover strip never blocks content.
+///
+/// Layout is driven by the REAL container height: a GeometryReader reads the
+/// transcript overlay's height each frame and the per-row pitch is
+/// `clamp(available / count, floors, defaults)` — gap compresses first, then
+/// row height, then bar height, each with a floor; beyond the floors the pitch
+/// stays exactly `available / count` so the column can never exceed the
+/// container at any turn count. Bar centers derive from rowHeight/2, never a
+/// hardcoded offset, so hover math stays correct as rows compress.
 struct TranscriptTimeline: View {
     let questions: [ChatMessage]
     /// Jump callback — ChatView owns the `ScrollViewReader` proxy.
@@ -43,18 +51,32 @@ struct TranscriptTimeline: View {
 
     private var accent: Color { Theme.color(accentHex) }
 
-    /// Layout metrics shared by hover math and marker layout.
-    private var rowPitch: CGFloat { 14 + gap }
-    private var columnHeight: CGFloat {
-        CGFloat(questions.count) * 14 + CGFloat(questions.count - 1) * gap
+    var body: some View {
+        GeometryReader { container in
+            strip(availableHeight: container.size.height)
+        }
+        .background(naturalWidthMeasurements)
+        .onPreferenceChange(TooltipWidthKey.self) { naturalWidths = $0 }
     }
 
-    var body: some View {
-        VStack(spacing: gap) {
+    /// The bar column. Sized to its own resolved metrics and re-centered in
+    /// the container (GeometryReader top-aligns children; the hover strip and
+    /// thumbnail overlay must attach to the COLUMN's bounds — the strip's
+    /// pointer math is relative to the column's top, and the tooltip anchors
+    /// to the column's vertical center — not to the container's).
+    private func strip(availableHeight: CGFloat) -> some View {
+        let metrics = Metrics.resolve(count: questions.count, available: availableHeight)
+        return VStack(spacing: metrics.gap) {
             ForEach(questions.indices, id: \.self) { index in
-                markerRow(questions[index], index: index)
+                markerRow(questions[index], index: index, metrics: metrics)
             }
         }
+        .frame(width: 24, height: metrics.columnHeight(for: questions.count))
+        // Interactions attach to the COLUMN's bounds, before the expansion
+        // frame below widens the view to the container: the tracking strip's
+        // pointer math is column-relative (top = first bar's row), and an
+        // NSView spanning the whole transcript would swallow content clicks
+        // and fire hover magnification from anywhere over the chat.
         .opacity(dimmed ? 0.4 : 1)
         .overlay {
             // AppKit-native hover tracking. SwiftUI's onHover/onContinuousHover
@@ -64,36 +86,39 @@ struct TranscriptTimeline: View {
             HoverTrackingStrip(
                 onMove: { y in
                     if let y {
-                        activate(at: y)
+                        activate(at: y, metrics: metrics)
                     } else {
                         deactivate()
                     }
                 },
                 onClick: { y in
-                    onJump(nearestQuestion(at: y))
+                    onJump(nearestQuestion(at: y, metrics: metrics))
                 }
             )
         }
         .overlay(alignment: .trailing) {
             if let index = hoveredIndex {
                 thumbnail(questions[index])
-                    .offset(x: -32, y: tooltipOffsetY(index))
+                    .offset(x: -32, y: tooltipOffsetY(index, metrics: metrics))
                     // Fade only — no scale/fly-in.
                     .transition(.opacity)
             }
         }
-        .background(naturalWidthMeasurements)
-        .onPreferenceChange(TooltipWidthKey.self) { naturalWidths = $0 }
+        // Re-center VERTICALLY only; trailing stays pinned to the overlay's
+        // trailing edge (a bare maxWidth/maxHeight frame would center
+        // horizontally too and park the strip mid-window). LAST, so everything
+        // above stays sized to the column.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
     }
 
     // MARK: - Hover state machine (no animation)
 
-    private func activate(at y: CGFloat) {
+    private func activate(at y: CGFloat, metrics: Metrics) {
         dimWork?.cancel()
         dimWork = nil
         dimmed = false
         pointerY = y
-        hovered = nearestQuestion(at: y)
+        hovered = nearestQuestion(at: y, metrics: metrics)
     }
 
     private func deactivate() {
@@ -107,57 +132,112 @@ struct TranscriptTimeline: View {
 
     // MARK: - Layout
 
-    /// Spacing between bars, compressed as the count grows so the column stays
-    /// within ~300pt even for long conversations.
-    private var gap: CGFloat {
-        let count = questions.count
-        guard count > 1 else { return 6 }
-        let needed = CGFloat(count) * 3 + CGFloat(count - 1) * 6
-        guard needed > 300 else { return 6 }
-        return max(1, (300 - CGFloat(count) * 3) / CGFloat(count - 1))
+    /// Metrics resolved from the real container height. The ladder compresses
+    /// in three stages before giving up any height at all:
+    /// 1. defaults — row 12 / gap 4 (16pt pitch, down from 14/6 = 20pt);
+    /// 2. gap-only — gap slides 4 → 2 with the row still 12;
+    /// 3. row-only — gap pinned at 2, row shrinks 12 → 6, and the bar thins
+    ///    3 → 2 once rows drop under 9pt so the capsule never fills the row;
+    /// 4. beyond the floors — pitch stays exactly `available / count` (split
+    ///    75/25 row/gap, bar at its 2pt floor), so the column mathematically
+    ///    never exceeds the container at ANY turn count.
+    private struct Metrics {
+        let rowHeight: CGFloat
+        let gap: CGFloat
+        let barHeight: CGFloat
+
+        /// Distance between consecutive bar centers.
+        var pitch: CGFloat { rowHeight + gap }
+
+        func columnHeight(for count: Int) -> CGFloat {
+            guard count > 0 else { return 0 }
+            return CGFloat(count) * rowHeight + CGFloat(count - 1) * gap
+        }
+
+        static let defaultRowHeight: CGFloat = 12
+        static let defaultGap: CGFloat = 4
+        static let idleBarHeight: CGFloat = 3
+        static let minRowHeight: CGFloat = 6
+        static let minGap: CGFloat = 2
+        static let minBarHeight: CGFloat = 2
+        /// Breathing room kept clear at the container's top/bottom (6pt each).
+        static let verticalInset: CGFloat = 12
+
+        static func resolve(count: Int, available: CGFloat) -> Metrics {
+            let usable = max(0, available - verticalInset)
+            let n = CGFloat(max(count, 1))
+            if n * (defaultRowHeight + defaultGap) <= usable {
+                return Metrics(rowHeight: defaultRowHeight, gap: defaultGap, barHeight: idleBarHeight)
+            }
+            let pitch = usable / n
+            if pitch >= defaultRowHeight + minGap {
+                return Metrics(rowHeight: defaultRowHeight, gap: pitch - defaultRowHeight, barHeight: idleBarHeight)
+            }
+            if pitch >= minRowHeight + minGap {
+                let row = pitch - minGap
+                return Metrics(
+                    rowHeight: row,
+                    gap: minGap,
+                    barHeight: row < 9 ? minBarHeight : idleBarHeight
+                )
+            }
+            let row = max(minBarHeight, pitch * 0.75)
+            return Metrics(rowHeight: row, gap: max(0.5, pitch - row), barHeight: minBarHeight)
+        }
     }
 
     private var hoveredIndex: Int? {
         hovered.flatMap { id in questions.firstIndex { $0.id == id } }
     }
 
-    private func nearestQuestion(at y: CGFloat) -> UUID {
-        let index = min(max(0, Int((y - 7).rounded() / rowPitch)), questions.count - 1)
+    private func nearestQuestion(at y: CGFloat, metrics: Metrics) -> UUID {
+        // Bar centers sit at rowHeight/2 + i * pitch from the column top.
+        let index = min(max(0, Int((y - metrics.rowHeight / 2).rounded() / metrics.pitch)), questions.count - 1)
         return questions[index].id
     }
 
     /// Vertical offset that centers the tooltip on the hovered bar, relative
     /// to the column's vertical center (the overlay's `.trailing` anchor).
-    private func tooltipOffsetY(_ index: Int) -> CGFloat {
-        let barCenter = 7 + CGFloat(index) * rowPitch
-        return barCenter - columnHeight / 2
+    private func tooltipOffsetY(_ index: Int, metrics: Metrics) -> CGFloat {
+        let barCenter = metrics.rowHeight / 2 + CGFloat(index) * metrics.pitch
+        return barCenter - metrics.columnHeight(for: questions.count) / 2
     }
 
     /// Dock falloff from the pointer's distance to each bar's center: full
-    /// magnification at the bar, smooth (smoothstep) taper across ~2 rows.
-    /// Reduce Motion keeps every bar idle-sized; the hovered one still tints.
-    private func magnification(for index: Int) -> CGFloat {
+    /// magnification at the bar, smooth (smoothstep) taper across ~2 rows
+    /// (fixed 30pt radius — at compressed pitches more bars share the taper,
+    /// which reads like the Dock at high icon counts). Reduce Motion keeps
+    /// every bar idle-sized; the hovered one still tints.
+    private func magnification(for index: Int, metrics: Metrics) -> CGFloat {
         guard let pointerY, !reduceMotion else { return 0 }
-        let distance = abs(pointerY - (7 + CGFloat(index) * rowPitch))
+        let distance = abs(pointerY - (metrics.rowHeight / 2 + CGFloat(index) * metrics.pitch))
         let t = max(0, 1 - distance / 30)
         return t * t * (3 - 2 * t)
     }
 
-    private func markerRow(_ question: ChatMessage, index: Int) -> some View {
-        let magnify = magnification(for: index)
+    private func markerRow(_ question: ChatMessage, index: Int, metrics: Metrics) -> some View {
+        let magnify = magnification(for: index, metrics: metrics)
         let hoveredHere = hovered == question.id
+        // Height grows barHeight → barHeight + 2, clamped to the row pitch so
+        // a popped bar can never overlap its neighbors in a compressed column
+        // (never engages at the 16pt default; the 14→22pt width taper and the
+        // accent tint keep hover unmistakable at any density). Widths stay on
+        // one right axis, so only height can collide.
+        let magnifiedHeight = min(
+            metrics.barHeight + 2 * magnify,
+            max(metrics.barHeight, metrics.pitch)
+        )
         return ZStack(alignment: .trailing) {
             Capsule()
                 .fill(hoveredHere ? AnyShapeStyle(accent) : AnyShapeStyle(barColor))
-                // 14→22pt wide, 3→5pt tall at full magnification.
                 .frame(
                     width: 14 + 8 * magnify,
-                    height: 3 + 2 * magnify
+                    height: magnifiedHeight
                 )
         }
         // The fixed row frame is what keeps the column's height stable while
         // bar heights change inside it — no jitter for the neighbors.
-        .frame(width: 24, height: 14, alignment: .trailing)
+        .frame(width: 24, height: metrics.rowHeight, alignment: .trailing)
     }
 
     /// Idle bar color — quiet by default; hovering does the highlighting (the
@@ -297,8 +377,8 @@ private final class TrackingNSView: NSView {
     }
 
     /// SwiftUI math above treats the strip top-down (bar centers at
-    /// `7 + i * rowPitch` from the TOP); NSView reports bottom-up, so flip Y
-    /// here once at the boundary.
+    /// `rowHeight/2 + i * pitch` from the TOP); NSView reports bottom-up, so
+    /// flip Y here once at the boundary.
     private func topDownY(of event: NSEvent) -> CGFloat {
         bounds.height - convert(event.locationInWindow, from: nil).y
     }
