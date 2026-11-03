@@ -301,3 +301,14 @@
 
 ### 验证(Owner: Orchestrator)
 - dist 包内 `--smoke-steer` 23/23 PASS(exit 0,修复前 SIGILL/132);debug 构建回归 PASS。
+
+## P22 harness 打包环境熔断——0.6.7 事故根因(用户数据损失)
+
+**背景**:0.6.7 发布前从 `dist/Mia.app` 内直接跑 `--smoke-steer` 做"打包二进制验证"。打包进程的 `UserDefaults.standard` 落在真实用户域(bundle id),harness 的快照/恢复被打断(首次运行撞上 P21 的 SIGILL,恢复代码未执行),测试 provider 覆盖了用户 `providersJSON`/`selectedProviderID` 并清了 `promptHistory`;二次运行又把污染态快照/恢复了一遍。裸 debug 二进制落在无害的进程名域,故 harness 从未按打包环境设防。
+
+### 需求
+- R22.1 main.swift 顶部中央熔断:`Bundle.main.bundleIdentifier` 非空时拒绝一切 `--smoke-*`(仅豁免只读的 `--smoke-bundles`,build.sh 从成品包运行它),stderr 说明并 `exit(70)`。验证打包二进制的安全姿势 = 先拷出包外(`/tmp/Mia --smoke-…`,既回到 scratch 域又跳过 bundle 专属路径)。
+- R22.2 数据面:API key 在 `~/Library/Application Support/Mia/secrets.json`(按 provider UUID 键控,未被波及)、`selectedModelsJSON`/`knownModelsJSON`/能力表幸存——按原 UUID 重建 provider 行即可自动接回 key 与模型选择,仅 name/baseURL 需推断或人工补。
+
+### 验证(Owner: Orchestrator)
+- dist 包内 `--smoke-steer` → exit 70 拒绝且零 defaults 写入;拷出包外 → 23/23 PASS;debug 全套 harness 回归不受影响;数据恢复经用户确认后执行。

@@ -17,6 +17,30 @@ if !CommandLine.arguments.contains(where: { $0.hasPrefix("--") }) {
     BrandMigration.migrate()
 }
 
+// Harnesses mutate UserDefaults (providers, prompt history, …). From the
+// UNBUNDLED binary that lands in the harmless process-name defaults domain,
+// which is what every harness was written against. From inside dist/Mia.app
+// they hit the user's REAL domain (bundle id), and a crash mid-harness skips
+// the snapshot restore — which once erased a user's providers outright
+// (0.6.7, running --smoke-steer from the dist app against a crashing tail).
+// The single bundled-safe exception is --smoke-bundles: read-only bundle
+// resolution, which build.sh deliberately runs from the assembled app. To
+// exercise a shipped binary safely, copy it OUT of the bundle first —
+//   cp dist/Mia.app/Contents/MacOS/Mia /tmp/ && /tmp/Mia --smoke-steer
+// — which both drops it back into the scratch domain and skips bundle-only
+// code paths the harness doesn't need.
+if let bundleID = Bundle.main.bundleIdentifier, !bundleID.isEmpty {
+    let mutating = CommandLine.arguments.filter { $0.hasPrefix("--smoke-") && $0 != "--smoke-bundles" }
+    if !mutating.isEmpty {
+        FileHandle.standardError.write(
+            ("refusing \(mutating.joined(separator: " ")) inside app bundle \(bundleID): "
+                + "harnesses mutate defaults and the real user domain lives here — "
+                + "run the unbundled binary instead\n").data(using: .utf8)!
+        )
+        exit(70)
+    }
+}
+
 // Headless streaming checks (no UI):
 //   MIA_API_KEY=… .build/debug/Mia --smoke          plain streaming
 //   MIA_API_KEY=… .build/debug/Mia --smoke-search   agentic loop w/ DuckDuckGo
