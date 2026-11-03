@@ -291,3 +291,13 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-steer` 重写为 23 项:多条堆叠/按 id 丢弃/未知 id 拒绝/空闲插入仅消费自身;流中单条提交其余保留;**回合结束自动提交 + 恰好一个作答 turn**(error 行计数=2 证明合答);newChat 清空队列。`--smoke-rerun`/`--smoke-persist`/`--smoke-history-load` 回归全过;多条 chip 视觉人工验收。
+
+## P21 headless 进程跳过完成通知——NSApp IUO 陷阱(排查 P20 时暴露)
+
+**背景**:新 steer harness 让失败尾**自然落地**(旧 harness 的失败尾都经 `stop()` 取消、通知器被 `!Task.isCancelled` 短路,从未走到);dist 包内跑 `--smoke-steer` 读到真实用户 defaults(通知开启,`isEnabled` 不再短路),`announce` 求值 `NSApp.isActive`——smoke 进程从未创建 NSApplication,`NSApp` 这一 IUO 全局读 nil 即 SIGILL。debug 裸二进制 defaults 域无该开关恒 false 短路,故仅 dist 复现。
+
+### 需求
+- R21.1 `CompletionNotifier.announce` 头部加 `guard let app = NSApp else { return }`:无 app 对象即无可召回的用户(无面板、无横幅受众),整段跳过;真机 app 的 NSApp 恒非 nil,行为零变化。
+
+### 验证(Owner: Orchestrator)
+- dist 包内 `--smoke-steer` 23/23 PASS(exit 0,修复前 SIGILL/132);debug 构建回归 PASS。
