@@ -77,10 +77,14 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func announce(title: String, body: String, sound: String) {
+        // Headless (smoke harness) runs never create NSApplication, and NSApp
+        // is an implicitly-unwrapped global — reading it would trap. No app
+        // object also means no panel and nobody to pull back.
+        guard let app = NSApp else { return }
         // Active = the user is in Mia, watching the panel. The cancelled-task
         // case never reaches here (ChatStore checks before calling), so this
         // guard is exactly "finished while away".
-        guard isEnabled, !NSApp.isActive else { return }
+        guard isEnabled, !app.isActive else { return }
         if wantsSound { NSSound(named: NSSound.Name(sound))?.play() }
         postBanner(title: title, body: body)
     }
