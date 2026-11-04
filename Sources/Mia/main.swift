@@ -973,6 +973,9 @@ if CommandLine.arguments.contains("--smoke-steer") {
                   && streaming.messages.last?.role == .user
                   && streaming.messages.last?.text == "follow up one",
               "roles=\(streaming.messages.map(\.role))")
+        log.check("committed follow-up is flagged for its auto-answer",
+              streaming.messages.last(where: { $0.role == .user })?.pendingAnswer == true,
+              "flagged=\(streaming.messages.filter { $0.pendingAnswer }.count)")
         log.check("the other chip stays parked",
               streaming.steers.map(\.text) == ["follow up two"],
               "queued=\(streaming.steers.map(\.text))")
@@ -1009,6 +1012,33 @@ if CommandLine.arguments.contains("--smoke-steer") {
               PromptHistory.entries.filter { $0 == "follow up one" || $0 == "follow up two" }.count == 2,
               "entries=\(PromptHistory.entries)")
         log.check("retry frees up once the queue is spent", streaming.canRerunLastTurn)
+        log.check("no row stays flagged once answered",
+              !streaming.messages.contains { $0.pendingAnswer },
+              "flagged=\(streaming.messages.filter { $0.pendingAnswer }.count)")
+
+        // Stall predicate boundaries (pure function). The "exactly at" case
+        // pins both dates to integer reference seconds so the elapsed delta
+        // is exactly 2.0 — a wall-clock pair can round a hair past the
+        // threshold and flip the answer.
+        let stallNow = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let quietThreshold = stallNow.addingTimeInterval(-ChatStore.stallThreshold)
+        let quietPast = stallNow.addingTimeInterval(-ChatStore.stallThreshold - 0.001)
+        log.check("isStalled is false exactly at the threshold",
+              !ChatStore.isStalled(
+                  streaming: true, targetEmpty: false, revealActive: false,
+                  lastEvent: quietThreshold, now: stallNow))
+        log.check("isStalled is true past the threshold",
+              ChatStore.isStalled(
+                  streaming: true, targetEmpty: false, revealActive: false,
+                  lastEvent: quietPast, now: stallNow))
+        log.check("isStalled ignores an empty target (the waiting row owns that state)",
+              !ChatStore.isStalled(
+                  streaming: true, targetEmpty: true, revealActive: false,
+                  lastEvent: quietPast, now: stallNow))
+        log.check("isStalled ignores a live reveal (a moving caret already speaks)",
+              !ChatStore.isStalled(
+                  streaming: true, targetEmpty: false, revealActive: true,
+                  lastEvent: quietPast, now: stallNow))
 
         // A queued follow-up never survives into a fresh chat.
         _ = streaming.queueSteer("leftover one")

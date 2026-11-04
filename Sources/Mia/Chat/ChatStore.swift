@@ -32,6 +32,19 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     /// (old transcripts decode fine) and because a provider that never reports
     /// usage leaves the token counts nil — duration alone still shows.
     var stats: TurnStats?
+    /// TRANSIENT UI STATE, never persisted: true on a committed steer's user
+    /// row from its insertion under the streaming reply until the turn's
+    /// auto-answer starts, driving the "Answered when this reply finishes"
+    /// hint under the bubble. Omitted from `CodingKeys` below — synthesis
+    /// only codes the listed keys, so decode always leaves it at its default
+    /// false and a force-quit mid-turn can't resurrect a stale badge.
+    var pendingAnswer = false
+
+    /// Deliberately excludes `pendingAnswer`: the flag is session-only UI
+    /// state (see above), so it neither writes to disk nor reads back.
+    enum CodingKeys: String, CodingKey {
+        case id, role, text, wireText, attachments, reasoning, createdAt, stats
+    }
 }
 
 /// API-reported token usage for one turn. `total` includes the prompt (the
@@ -199,6 +212,21 @@ final class ChatStore: ObservableObject {
     private var streamFinished = false
     private var streamingMessageID: UUID?
     private var drainTask: Task<Void, Never>?
+
+    /// Stall feedback for a mid-stream pause: when the streaming row already
+    /// has text on screen but no stream event has arrived for `stallThreshold`
+    /// seconds — the model thinking, a tool round, a stuck network — a status
+    /// line under the reply says work is continuing. nil when not stalled;
+    /// the date itself is what the line's elapsed counter displays. Written
+    /// only on true↔false transitions (see `startStallWatchdog`), never per
+    /// tick.
+    @Published private(set) var stalledSince: Date?
+    /// Wall-clock of the last event received on the current turn's stream;
+    /// nil between turns. Not published — only the watchdog reads it.
+    private var lastStreamEventAt: Date?
+    /// The 1 Hz loop that flips `stalledSince`; started alongside streamTask
+    /// and owned by the same lifecycle.
+    private var stallWatchdog: Task<Void, Never>?
 
     /// Delta 4: the trailing fade over text the drain has just committed, for the
     /// row currently revealing. Published so the streaming row repaints while the
@@ -481,6 +509,13 @@ final class ChatStore: ObservableObject {
             }
         }
 
+        // This turn answers every flagged row (its history was just built
+        // from `messages` above) — retire the "answered when this reply
+        // finishes" hints. The config-failure early-return above keeps its
+        // flags: those questions genuinely remain unanswered.
+        for i in messages.indices where messages[i].pendingAnswer {
+            messages[i].pendingAnswer = false
+        }
         persist()
         let assistantMessage = ChatMessage(role: .assistant, text: "", createdAt: Date())
         messages.append(assistantMessage)
@@ -492,6 +527,8 @@ final class ChatStore: ObservableObject {
         streamTarget = ""
         streamFinished = false
         streamingMessageID = assistantMessage.id
+        lastStreamEventAt = nil
+        stalledSince = nil
 
         // Same event stream either way — only the wire protocol differs.
         let stream: AsyncStream<ChatStreamEvent>
@@ -523,6 +560,10 @@ final class ChatStore: ObservableObject {
             // append a visible error row, so both count as a dangling turn).
             var failure: String?
             for await event in stream {
+                // Any event counts as life for the stall watchdog — text,
+                // status, usage, even errors: the line exists to say
+                // "working", not "producing".
+                lastStreamEventAt = Date()
                 switch event {
                 case .partial(let text), .done(let text):
                     streamTarget = text
@@ -592,6 +633,15 @@ final class ChatStore: ObservableObject {
             isStreaming = false
             pendingStatus = nil
             pendingReasoning = nil
+            // The stall line dies with the turn it describes. This sits in
+            // the tail's synchronous window (no await between isStreaming
+            // flipping false and here), so it cannot cancel the NEXT turn's
+            // watchdog — which the auto-answer far below, or a send racing
+            // this still-revealing tail, installs only after an await.
+            stallWatchdog?.cancel()
+            stallWatchdog = nil
+            lastStreamEventAt = nil
+            stalledSince = nil
             // Pull the user back if they left during the turn (the panel hides
             // on every deactivation, so "away" is the common case). A
             // cancelled task is a stop — the user is already here, so it
@@ -652,6 +702,9 @@ final class ChatStore: ObservableObject {
             commitQueuedSteers()
             if insertedSteerCount > 0 { _ = autoAnswerPendingSteer() }
         }
+        // The stall line's clock: same lifecycle as streamTask — started
+        // here, ended by the tail (or superseded by the next turn's start).
+        startStallWatchdog()
         // The turn actually started — the composer clears its draft/attachments.
         return true
     }
@@ -714,6 +767,13 @@ final class ChatStore: ObservableObject {
     private func commit(draft: SteerDraft) -> Bool {
         guard case .ok = preflight(draft.text, attachments: draft.attachments) else { return false }
         PromptHistory.record(draft.text)
+        // Flag the just-committed question — preflight's user row is the last
+        // one on this success path — so its row can say it will be answered
+        // when the streaming reply finishes. commitSteerInsert and
+        // commitQueuedSteers both come through here.
+        if let index = messages.lastIndex(where: { $0.role == .user }) {
+            messages[index].pendingAnswer = true
+        }
         persist()
         return true
     }
@@ -783,6 +843,57 @@ final class ChatStore: ObservableObject {
         var rate = max(typewriterCharsPerSecond, backlog / 6)
         if finished { rate *= 3 }
         return min(backlog, max(1, rate * interval / 1000))
+    }
+
+    /// How long a stream with text already on screen must stay silent before
+    /// it reads as stalled (Task A). A reveal in flight suppresses the
+    /// indicator anyway (`revealActive`), so this only governs the true
+    /// nothing-arriving case.
+    nonisolated static let stallThreshold: TimeInterval = 2
+
+    /// Pure stall predicate, extracted so the smoke harness can pin the
+    /// threshold and every guard offline (the `typewriterStep` pattern). A
+    /// stall counts only while the network turn is live, the reply already
+    /// has visible text (before that, the waiting indicator owns the state)
+    /// and the typewriter isn't revealing — a moving caret already says
+    /// "working".
+    nonisolated static func isStalled(
+        streaming: Bool,
+        targetEmpty: Bool,
+        revealActive: Bool,
+        lastEvent: Date?,
+        now: Date = Date()
+    ) -> Bool {
+        guard streaming, !targetEmpty, !revealActive, let lastEvent else { return false }
+        return now.timeIntervalSince(lastEvent) > stallThreshold
+    }
+
+    /// Launches the turn's stall watchdog (called right after streamTask is
+    /// created). Polls at 1 Hz and writes `stalledSince` only on transitions
+    /// — steady state publishes nothing, so idle ticks cost no view updates.
+    /// Exits — clearing the flag — as soon as the turn ends or it is
+    /// cancelled; a superseding turn's start cancels the old instance first.
+    private func startStallWatchdog() {
+        stallWatchdog?.cancel()
+        stallWatchdog = Task { [weak self] in
+            var stalled = false
+            while let self, !Task.isCancelled, self.isStreaming {
+                let isStalled = Self.isStalled(
+                    streaming: self.isStreaming,
+                    targetEmpty: self.streamTarget.isEmpty,
+                    revealActive: self.reveal != nil,
+                    lastEvent: self.lastStreamEventAt
+                )
+                if isStalled != stalled {
+                    stalled = isStalled
+                    self.stalledSince = isStalled ? Date() : nil
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            // Exit path (turn over, cancelled, or store gone): never leave a
+            // stale stall line behind.
+            self?.stalledSince = nil
+        }
     }
 
     /// Generations of the current step that the per-character fade spans (6a).
@@ -1047,6 +1158,14 @@ final class ChatStore: ObservableObject {
     private func flushTypewriter() {
         drainTask?.cancel()
         drainTask = nil
+        // Wherever this runs the network turn is already over (stop,
+        // truncate, or the head of a new send), so its watchdog must not
+        // outlive it — and the stall line must not linger past a Stop the
+        // way the waiting row's status must not.
+        stallWatchdog?.cancel()
+        stallWatchdog = nil
+        stalledSince = nil
+        lastStreamEventAt = nil
         // The fade describes a reveal that is over; leaving it would strand the
         // flushed tail translucent with nothing left to tick it back to opaque.
         reveal = nil
@@ -1079,6 +1198,12 @@ final class ChatStore: ObservableObject {
         conversationID = UUID()
         sharedPrefixCount = index + 1
         messages = Array(messages.prefix(index + 1))
+        // The in-memory copy must not carry the pending-answer hint: the
+        // branch diverges here and no turn is armed to answer these rows.
+        // (Disk loads need no equivalent — decode always yields false.)
+        for i in messages.indices where messages[i].pendingAnswer {
+            messages[i].pendingAnswer = false
+        }
         messages.append(ChatMessage(
             role: .activity,
             text: "Forked here — this branch diverges from the original conversation."

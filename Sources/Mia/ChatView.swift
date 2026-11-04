@@ -368,6 +368,21 @@ struct ChatView: View {
                                         )
                                     }
                                     : nil
+                            // Stall line: only the streaming row that already
+                            // has text on screen (before that the waiting row
+                            // owns the state) — nil for every other row (the
+                            // `waiting` gating trick), so a stall flip repaints
+                            // exactly one row.
+                            let stallSince: Date? = id == streamingID && !message.text.isEmpty
+                                ? store.stalledSince
+                                : nil
+                            // A mid-stream `.status` is only cleared on the
+                            // empty→text transition, so one that arrived after
+                            // the text ("Searching…") may still be alive — use
+                            // it when it is, else the generic label.
+                            let stallStatus: String? = stallSince != nil
+                                ? (store.pendingStatus ?? "Working")
+                                : nil
                             MessageRow(
                                 message: message,
                                 rerunnable: id == rerunID,
@@ -380,6 +395,8 @@ struct ChatView: View {
                                 reveal: revealing ? revealFade : nil,
                                 waitingStatus: waiting,
                                 waitingReasoning: waitingReasoning,
+                                stalledSince: stallSince,
+                                stallStatus: stallStatus,
                                 capabilityAction: capabilityAction,
                                 onFork: { store.fork(at: id) },
                                 onExport: { exportReply(id) },
@@ -875,6 +892,13 @@ private struct MessageRow: View, Equatable {
     /// Non-nil only for that same row once thinking has arrived: the text the
     /// waiting indicator scrolls. Part of == so it repaints only this row.
     var waitingReasoning: String?
+    /// Stall feedback: non-nil only for the streaming row while it has text
+    /// on screen and the stream has gone quiet past the threshold — drives
+    /// the pulsing status line under the reply. Part of == so a stall flip
+    /// repaints exactly that row.
+    var stalledSince: Date?
+    /// The stall line's label; non-nil exactly when `stalledSince` is.
+    var stallStatus: String?
     /// Non-nil only for the error row of an unattributed send failure that
     /// carried image/file parts: the "don't send X to this model again" manual
     /// exception, offered where the problem appeared. Part of ==.
@@ -929,6 +953,8 @@ private struct MessageRow: View, Equatable {
             && lhs.reveal == rhs.reveal
             && lhs.waitingStatus == rhs.waitingStatus
             && lhs.waitingReasoning == rhs.waitingReasoning
+            && lhs.stalledSince == rhs.stalledSince
+            && lhs.stallStatus == rhs.stallStatus
             && lhs.capabilityAction == rhs.capabilityAction
             && abs(lhs.bubbleMaxWidth - rhs.bubbleMaxWidth) < 0.5
     }
@@ -990,6 +1016,19 @@ private struct MessageRow: View, Equatable {
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .opacity(hovered ? 1 : 0)
                         .animation(.easeInOut(duration: 0.15), value: hovered)
+                }
+                // A committed steer sits under the still-streaming reply
+                // until the turn truly ends, when it is answered together
+                // with everything else committed — say so, so the silence
+                // isn't read as ignored. (ChatMessage's Equatable already
+                // covers the flag, so the row repaints when it flips.)
+                if message.pendingAnswer {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("Answered when this reply finishes")
+                    }
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
                 }
                 // Only when this bubble is the last thing in the transcript, i.e.
                 // the reply came back empty and left nothing else to hang them on.
@@ -1067,6 +1106,14 @@ private struct MessageRow: View, Equatable {
                         .labelStyle(.titleAndIcon)
                         .opacity(showCaret ? 0 : 1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    // The stall line: same anti-reflow trick as the footer —
+                    // mounted whenever the footer is (text on screen) and
+                    // toggled by opacity alone, so a stall appearing or
+                    // clearing never re-measures the transcript.
+                    if !message.text.isEmpty {
+                        StallIndicator(since: stalledSince, status: stallStatus)
+                            .opacity(stalledSince == nil ? 0 : 1)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1245,6 +1292,51 @@ private struct ChatLoadingIndicator: View {
             }
         }
         .onAppear { waving.toggle() }
+    }
+}
+
+/// The streaming row's stall line (Task A): visible only while the stream has
+/// text on screen but has gone quiet past the threshold (model thinking, a
+/// tool round, a stuck network). Same vocabulary as the waiting row — a
+/// pulsing accent dot driven by a repeatForever CA animation (the caret rule:
+/// no timer-driven body re-evaluations), plus an elapsed counter. Its caller
+/// keeps it permanently mounted and toggles it with opacity, so appearing
+/// never reflows the transcript.
+private struct StallIndicator: View {
+    /// When the stream went quiet; nil means "not stalled" — the caller still
+    /// mounts the view, invisible, to hold the layout.
+    var since: Date?
+    var status: String?
+
+    @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
+    @State private var pulsing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Theme.color(accentHex))
+                .frame(width: 7, height: 7)
+                .opacity(pulsing ? 0.25 : 1)
+            Text(status ?? "Working")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let since {
+                ElapsedLabel(since: since)
+                    .fixedSize()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear {
+            // Reduce Motion: skip the pulse — the dot stays lit and the line
+            // still communicates "working".
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                pulsing = true
+            }
+        }
     }
 }
 
