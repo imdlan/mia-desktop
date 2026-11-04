@@ -344,3 +344,25 @@
 
 ### 验证(Owner: Orchestrator)
 - PIL 实测 `--shot timeline` 刻度 pitch 24px(2x,=12pt);`swift build` 零 error;真机点击观感由用户验收。
+
+## P26 流中暂停的脉动状态行(用户需求)
+
+**背景**:正文已流出的回合里,模型段间思考/工具回合/网络卡顿都会让块状光标冻结在原地——没有 token 到达就没有任何视觉信号,用户无从判断「还在工作」还是「已经死掉」。用户提议给光标加闪动;分析后否决:光标是正文 NSAttributedString 里的字形(caret rule——timer 驱动的闪烁=每 tick 重排整个转录区),改为把 app 既有的「等待语言」(脉动圆点)扩展到流中暂停。
+
+### 需求
+- R26.1 ChatStore 心跳与看门狗:`lastStreamEventAt`(任何流事件——partial/status/usage/reasoning/activity——都算活跃)+ `stalledSince: Date?`(仅在真假翻转时发布,不逐 tick);纯函数 `isStalled(streaming/targetEmpty/revealActive/lastEvent/now:)` + `stallThreshold=2s`(nonisolated static,`typewriterStep` 的测试钩模式);1Hz 看门狗随 streamTask 生命周期启动,tail 的**同步窗口内**(首个 await 前)取消——放在字面末尾会杀掉 auto-answer 下一回合刚装上的看门狗;`flushTypewriter`(Stop)/新回合全路径同步清理。
+- R26.2 UI:`StallIndicator`——脉动 accent 圆点(repeatForever CA 动画,WaitingIndicator 同款,不触碰 caret rule)+ 状态文案(优先复用 mid-stream `.status`,此前正文非空后这些状态无处显示;否则 "Working")+ 静默计时 ElapsedLabel。门控:仅流式行且已有正文(空行仍是 WaitingIndicator 的领地),MessageRow `==` 新增两参保证翻转只重绘该行;沿用 footer 的「恒挂载、opacity 切换」防回流模式;reduce-motion 圆点常亮不脉动。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-steer` 扩至 29 项:新增 `isStalled` 四边界(阈值精确点用整数参考秒锚定,规避浮点抖动);`--smoke-typewriter` 回归 PASS;`--smoke-rerun` 本机 6 项 FAIL 为存量环境问题(真实 provider 配置破坏 harness 无 provider 前提),经 HEAD 干净 worktree 重建复现确认与本次改动无关;`swift build` 零 error;dist 构建经用户真机验收。
+
+## P27 steer 已提交追问的待答提示(用户需求)
+
+**背景**:chip ↑ 插入后,问题立即作为 user 行落到流式行之下,但要等到回合真正结束才自动合答——这中间没有任何指示,用户读作「排了队不知道会不会答」。P11 定稿的不打断语义不动,只补反馈。
+
+### 需求
+- R27.1 `ChatMessage.pendingAnswer`(瞬态 UI 状态):显式 `CodingKeys` **排除该键**——合成 Codable 不落盘、解码恒 false,强退/重载不残留假角标;`commit(draft:)` 成功即标记最后一条 user 行(手动 ↑ 与回合结束 sweep 共用此路);`performTurn` 开始作答时全清(config 失败的 early-return 不清——那些问题确实还没被回答);`fork(at:)` 复制内存行时清零。
+- R27.2 UI:user 气泡下右对齐 caption「Answered when this reply finishes」(clock.arrow.circlepath,10.5pt tertiary),作答回合开始即消失;ChatMessage 合成 Equatable 已含该标记,行随翻转自动重绘,`==` 无需改动。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-steer` 新增两断言:commitSteerInsert 后最后一条 user 行 `pendingAnswer == true`;settle(回合+自动作答跑完)后全转录无残留标记;角标出现/消失观感经用户真机验收。
