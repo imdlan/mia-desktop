@@ -366,3 +366,36 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-steer` 新增两断言:commitSteerInsert 后最后一条 user 行 `pendingAnswer == true`;settle(回合+自动作答跑完)后全转录无残留标记;角标出现/消失观感经用户真机验收。
+
+## P28 停滞行改为可见输出驱动(用户反馈:指示消失后正文迟到)
+
+**背景**:0.6.9 实测:思考/状态等**不可见**流事件也会解除停滞——指示行先消失、正文几秒后才到,出现「指示没了但没字」的空窗。
+
+### 需求
+- R28.1 `lastStreamEventAt`→`lastTextEventAt`:仅 `.partial/.done` 携非空文本时刷新;`.reasoning/.status/.activity` 不解除停滞、只给指示行**供词**——标签三级:`.status` 文案 > "Thinking"(`pendingReasoning` 非空,正文到达才清) > "Working"(纯静默)。正文到达的同一 tick 同步 `stalledSince = nil`(隐藏不再等 1Hz 看门狗轮询,指示行消失瞬间=光标重新动起来)。`isStalled` 参数 `lastEvent`→`lastText`,doc 注释语义同步;看门狗机制与 2s 阈值不变。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-steer` 29 项(isStalled 边界断言随参数名);`--smoke-typewriter` PASS;真机验收(Thinking 期间指示不消失、正文恢复瞬间隐藏)。
+
+## P29 待答角标——文字行改气泡右上角脉动徽章(用户反馈:间距大)
+
+**背景**:P27 的气泡下方小字被恒占高的隐藏时间戳行顶开,与气泡间距难看。用户拍板 badge 方案;首版右下角 17pt 实测后按反馈改小并移至右上角。
+
+### 需求
+- R29.1 删除下方文字行;`PendingAnswerBadge` 以 overlay 挂气泡 **topTrailing**(不占布局,根治间距):14pt accent 圆 + 8pt `clock.arrow.circlepath`,offset(5,-5) 约 1/3 直径探出——上方是正在流式的回复行,比下方相邻行更近,向上收敛。1.2s easeInOut opacity 1↔0.55 呼吸(CA 驱动 caret rule;多条待答同屏不吵);accentFill 气泡与徽章同色时 1pt `.background` 色细环分隔;reduce-motion 静态常亮;文案保留于 `.help` + `accessibilityLabel`。
+- R29.2 `--shot pending` harness:tint/fill × 明暗四组合合成气泡,overlay 挂点与真实气泡一致的离线自查路径。
+
+### 验证(Owner: Orchestrator)
+- `--shot pending` 明暗四组合截图自查通过;`swift build` 零 error;真机验收(位置/大小/观感)。
+
+## P30 流中 steer 插入后的滚动跟随修复(用户反馈:消息被压底看不见)
+
+**背景**:↑ 插入后转录区停止跟随,新 user 行被压到底部直到回合输出完成才「上弹」;期间手动滚动也追不上持续增长的底部。两处叠加缺陷:
+
+### 需求
+- R30.1 **文本跟随失明**:`.onChange(of: messages.last?.text)` 在 steer 挂尾后盯上静态 user 行,逐 tick 跟随失效(回合结束 auto-answer 追加新 assistant 行才恢复=「输出完才上弹」)。改盯**最后一条 assistant 行**的文本:流式行无论是否在末位都逐 tick 跟随,auto-answer 新行无缝接管。
+- R30.2 **布局扰动误解除置底**:`trackingBottomPin` 的 unpin 仅看 offset 下降>4pt——chip 消费/chips 区收起/面板重排引起的 AppKit 可见区调整同样压低 offset,被误判为用户上滚→`pinnedToBottom=false`→文本/几何跟随全被门控关死(「手动也滚不到底」的死锁)。`ScrollPin` 增 `contentHeight`/`containerHeight` 见证字段,unpin 需**仅 offset 变化**(纯用户上滚只动 offset;插入/移除/重排必动 height,永不误杀)。
+- R30.3 `--smoke-pin` 增补流中 steer 阶段:send 后 0.9s(死链连接挂起、isStreaming 仍真)`queueSteer`+`insertSteer`,+0.5s 断言 bottomDistance<24;连接已失败则打 skipped 不判 FAIL(防环境抖动误报)。
+
+### 验证(Owner: Orchestrator)
+- `--smoke-pin`:`after steer insert 8.0pt`、steer-insert-holds ok(连同既有 send-repins/hold);`--smoke-steer` 29 项、`--smoke-typewriter` 回归 PASS;真机验收通过(插入即可见、持续钉底跟随、上滚正常解除)。
