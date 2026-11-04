@@ -1026,19 +1026,19 @@ if CommandLine.arguments.contains("--smoke-steer") {
         log.check("isStalled is false exactly at the threshold",
               !ChatStore.isStalled(
                   streaming: true, targetEmpty: false, revealActive: false,
-                  lastEvent: quietThreshold, now: stallNow))
-        log.check("isStalled is true past the threshold",
+                  lastText: quietThreshold, now: stallNow))
+        log.check("isStalled is true past the threshold (since last text)",
               ChatStore.isStalled(
                   streaming: true, targetEmpty: false, revealActive: false,
-                  lastEvent: quietPast, now: stallNow))
+                  lastText: quietPast, now: stallNow))
         log.check("isStalled ignores an empty target (the waiting row owns that state)",
               !ChatStore.isStalled(
                   streaming: true, targetEmpty: true, revealActive: false,
-                  lastEvent: quietPast, now: stallNow))
+                  lastText: quietPast, now: stallNow))
         log.check("isStalled ignores a live reveal (a moving caret already speaks)",
               !ChatStore.isStalled(
                   streaming: true, targetEmpty: false, revealActive: true,
-                  lastEvent: quietPast, now: stallNow))
+                  lastText: quietPast, now: stallNow))
 
         // A queued follow-up never survives into a fresh chat.
         _ = streaming.queueSteer("leftover one")
@@ -3659,6 +3659,51 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                 shortcutStore: ShortcutStore(), onClose: {}
             ))
             size = NSSize(width: 560, height: 560)
+        case "pending":
+            // The queued-steer badge over both bubble styles (tint above, fill
+            // below) at the real 4pt row spacing, so the corner hang and how
+            // far the badge reaches up toward the row above can be eyeballed
+            // without driving a live provider. Solid panel, same reason as
+            // `transcript`. The dark flag is read because an offscreen bitmap
+            // has no environment to style-resolve from.
+            defaults.set(false, forKey: "liquidGlass")
+            // Same accent pin as `general`: the badge reads AppStorage, so
+            // without this it renders the default accent against #E0655B
+            // bubbles — a mismatch the real app can never produce.
+            let dark = CommandLine.arguments.contains("--dark")
+            let accent = "#E0655B"
+            defaults.set(accent, forKey: "accentColor")
+            func steerBubble(_ text: String, _ style: BubbleStyle) -> some View {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Text(text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.bubbleForeground(style: style, accentHex: accent))
+                        .padding(.vertical, 9)
+                        .padding(.horizontal, 14)
+                        .background(
+                            Theme.bubbleFill(style: style, accentHex: accent, dark: dark),
+                            in: UnevenRoundedRectangle(
+                                cornerRadii: RectangleCornerRadii(
+                                    topLeading: 18, bottomLeading: 18, bottomTrailing: 0, topTrailing: 18
+                                ),
+                                style: .continuous
+                            )
+                        )
+                        .overlay(alignment: .topTrailing) {
+                            PendingAnswerBadge().offset(x: 5, y: -5)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            content = NSHostingView(rootView: VStack(spacing: 4) {
+                steerBubble("And how does that change at sunset?", .accentTint)
+                steerBubble("Summarize in one line, then explain", .accentFill)
+            }
+                .padding(20)
+                .frame(width: 460, alignment: .trailing)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            size = NSSize(width: 460, height: 210)
         default:
             content = NSHostingView(rootView: SettingsView(
                 store: store, shortcutStore: ShortcutStore(), personaStore: PersonaStore(),
@@ -3905,8 +3950,41 @@ if CommandLine.arguments.contains("--smoke-pin") {
                                         let settled = bottomDistance(scroll) ?? -1
                                         print(String(format: "settled bottom distance = %.1fpt", settled))
                                         let okHold = settled < 24
-                                        print(okSend && okHold ? "PASS" : "FAIL (send=\(okSend) hold=\(okHold))")
-                                        exit(okSend && okHold ? 0 : 1)
+
+                                        // Steering mid-stream: the chip commit drops a
+                                        // static user row UNDER the streaming reply, so
+                                        // following must keep working with a layout
+                                        // churn (chips stack collapses, row inserts)
+                                        // landing on top. The dead host keeps the
+                                        // connection hanging — isStreaming should still
+                                        // be true here; if the environment already
+                                        // failed it, skip rather than judge on jitter.
+                                        guard controller.chatStore.isStreaming else {
+                                            print("steer-insert-holds: skipped (isStreaming=false, connection already failed)")
+                                            print(okSend && okHold ? "PASS" : "FAIL (send=\(okSend) hold=\(okHold))")
+                                            exit(okSend && okHold ? 0 : 1)
+                                        }
+                                        guard controller.chatStore.queueSteer("harness follow-up while waiting"),
+                                            let chip = controller.chatStore.steers.first else {
+                                            fail("steer chip did not queue mid-stream")
+                                        }
+                                        controller.chatStore.insertSteer(id: chip.id)
+                                        guard controller.chatStore.messages.last(where: { $0.role == .user })?.text
+                                            == "harness follow-up while waiting" else {
+                                            fail("insertSteer did not commit the chip under the stream")
+                                        }
+
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                            MainActor.assumeIsolated {
+                                                let steered = bottomDistance(scroll) ?? -1
+                                                print(String(format: "after steer insert, bottom distance = %.1fpt", steered))
+                                                let okSteer = steered < 24
+                                                print("steer-insert-holds: \(okSteer ? "ok" : "FAIL")")
+                                                let pass = okSend && okHold && okSteer
+                                                print(pass ? "PASS" : "FAIL (send=\(okSend) hold=\(okHold) steer=\(okSteer))")
+                                                exit(pass ? 0 : 1)
+                                            }
+                                        }
                                     }
                                 }
                             }

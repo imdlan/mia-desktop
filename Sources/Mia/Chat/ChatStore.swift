@@ -34,8 +34,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     var stats: TurnStats?
     /// TRANSIENT UI STATE, never persisted: true on a committed steer's user
     /// row from its insertion under the streaming reply until the turn's
-    /// auto-answer starts, driving the "Answered when this reply finishes"
-    /// hint under the bubble. Omitted from `CodingKeys` below — synthesis
+    /// auto-answer starts, driving the pulsing clock badge on the bubble's
+    /// upper trailing corner. Omitted from `CodingKeys` below — synthesis
     /// only codes the listed keys, so decode always leaves it at its default
     /// false and a force-quit mid-turn can't resurrect a stale badge.
     var pendingAnswer = false
@@ -214,16 +214,22 @@ final class ChatStore: ObservableObject {
     private var drainTask: Task<Void, Never>?
 
     /// Stall feedback for a mid-stream pause: when the streaming row already
-    /// has text on screen but no stream event has arrived for `stallThreshold`
-    /// seconds — the model thinking, a tool round, a stuck network — a status
-    /// line under the reply says work is continuing. nil when not stalled;
-    /// the date itself is what the line's elapsed counter displays. Written
-    /// only on true↔false transitions (see `startStallWatchdog`), never per
-    /// tick.
+    /// has text on screen but no VISIBLE output has arrived for
+    /// `stallThreshold` seconds — the model thinking, a tool round, a stuck
+    /// network — a status line under the reply says work is continuing. nil
+    /// when not stalled; the date itself is what the line's elapsed counter
+    /// displays. Written only on true↔false transitions (see
+    /// `startStallWatchdog`), never per tick.
     @Published private(set) var stalledSince: Date?
-    /// Wall-clock of the last event received on the current turn's stream;
-    /// nil between turns. Not published — only the watchdog reads it.
-    private var lastStreamEventAt: Date?
+    /// Wall-clock of the last VISIBLE-output event on the current turn's
+    /// stream — `.partial`/`.done` carrying text; nil between turns.
+    /// Invisible traffic (`.reasoning`/`.status`/`.activity`/`.usage`)
+    /// deliberately does NOT refresh it: a stall the user can't see must not
+    /// be talked away by events they can't see either. Those events feed the
+    /// stall line its LABEL (`pendingStatus`/`pendingReasoning`) instead —
+    /// visible output is what un-stalls. Not published; only the watchdog
+    /// and the text branch read it.
+    private var lastTextEventAt: Date?
     /// The 1 Hz loop that flips `stalledSince`; started alongside streamTask
     /// and owned by the same lifecycle.
     private var stallWatchdog: Task<Void, Never>?
@@ -527,7 +533,7 @@ final class ChatStore: ObservableObject {
         streamTarget = ""
         streamFinished = false
         streamingMessageID = assistantMessage.id
-        lastStreamEventAt = nil
+        lastTextEventAt = nil
         stalledSince = nil
 
         // Same event stream either way — only the wire protocol differs.
@@ -560,10 +566,6 @@ final class ChatStore: ObservableObject {
             // append a visible error row, so both count as a dangling turn).
             var failure: String?
             for await event in stream {
-                // Any event counts as life for the stall watchdog — text,
-                // status, usage, even errors: the line exists to say
-                // "working", not "producing".
-                lastStreamEventAt = Date()
                 switch event {
                 case .partial(let text), .done(let text):
                     streamTarget = text
@@ -571,6 +573,15 @@ final class ChatStore: ObservableObject {
                     if !text.isEmpty {
                         pendingStatus = nil
                         pendingReasoning = nil
+                        // The one event class that counts as visible output:
+                        // it re-arms the stall clock and hides the line NOW,
+                        // on the very tick the characters land. Un-stalling on
+                        // any event instead used to drop the line during a
+                        // thinking round — seconds of "indicator gone but no
+                        // new text" — because invisible traffic had refreshed
+                        // the clock behind the user's back.
+                        lastTextEventAt = Date()
+                        if stalledSince != nil { stalledSince = nil }
                         // Hand the thinking over to the message's own disclosure
                         // as the waiting row stops showing it, so it stays
                         // visible for the whole answer rather than reappearing
@@ -582,6 +593,10 @@ final class ChatStore: ObservableObject {
                     }
                     startDrain(messageID: assistantMessage.id, mode: typewriter)
                 case .status(let text):
+                    // Feeds the waiting row's label and, mid-text, the stall
+                    // line's ("Searching…") — but never lifts a stall: a note
+                    // the user can't see as characters must not un-stall the
+                    // caret.
                     pendingStatus = text
                 case .usage(let u):
                     usage = u
@@ -591,10 +606,15 @@ final class ChatStore: ObservableObject {
                     // COW-copy it and re-diff every row many times a second; the
                     // waiting row is the only thing that reads this, and it is
                     // Equatable-gated to itself. The durable copy is committed
-                    // once, where the answer takes over.
+                    // once, where the answer takes over. Mid-text it also feeds
+                    // the stall line's "Thinking" label — but never lifts the
+                    // stall: thinking is exactly the invisible work the line
+                    // exists to describe.
                     reasoning = text
                     pendingReasoning = text
                 case .activity(let text):
+                    // Its own visible row, but not body text — it does not
+                    // re-arm the stall clock; only visible OUTPUT does.
                     messages.insert(ChatMessage(role: .activity, text: text), at: assistantIndex)
                     assistantIndex += 1
                 case .error(let message):
@@ -640,7 +660,7 @@ final class ChatStore: ObservableObject {
             // this still-revealing tail, installs only after an await.
             stallWatchdog?.cancel()
             stallWatchdog = nil
-            lastStreamEventAt = nil
+            lastTextEventAt = nil
             stalledSince = nil
             // Pull the user back if they left during the turn (the panel hides
             // on every deactivation, so "away" is the common case). A
@@ -845,27 +865,29 @@ final class ChatStore: ObservableObject {
         return min(backlog, max(1, rate * interval / 1000))
     }
 
-    /// How long a stream with text already on screen must stay silent before
-    /// it reads as stalled (Task A). A reveal in flight suppresses the
-    /// indicator anyway (`revealActive`), so this only governs the true
-    /// nothing-arriving case.
+    /// How long a stream with text already on screen must go without VISIBLE
+    /// output before it reads as stalled (Task A). A reveal in flight
+    /// suppresses the indicator anyway (`revealActive`), so this only
+    /// governs the true nothing-arriving case.
     nonisolated static let stallThreshold: TimeInterval = 2
 
     /// Pure stall predicate, extracted so the smoke harness can pin the
     /// threshold and every guard offline (the `typewriterStep` pattern). A
     /// stall counts only while the network turn is live, the reply already
-    /// has visible text (before that, the waiting indicator owns the state)
-    /// and the typewriter isn't revealing — a moving caret already says
-    /// "working".
+    /// has visible text (before that, the waiting indicator owns the state),
+    /// the typewriter isn't revealing (a moving caret already says
+    /// "working"), and the time since the last VISIBLE output — body text;
+    /// thinking/status/activity traffic does not count — has passed the
+    /// threshold.
     nonisolated static func isStalled(
         streaming: Bool,
         targetEmpty: Bool,
         revealActive: Bool,
-        lastEvent: Date?,
+        lastText: Date?,
         now: Date = Date()
     ) -> Bool {
-        guard streaming, !targetEmpty, !revealActive, let lastEvent else { return false }
-        return now.timeIntervalSince(lastEvent) > stallThreshold
+        guard streaming, !targetEmpty, !revealActive, let lastText else { return false }
+        return now.timeIntervalSince(lastText) > stallThreshold
     }
 
     /// Launches the turn's stall watchdog (called right after streamTask is
@@ -882,7 +904,7 @@ final class ChatStore: ObservableObject {
                     streaming: self.isStreaming,
                     targetEmpty: self.streamTarget.isEmpty,
                     revealActive: self.reveal != nil,
-                    lastEvent: self.lastStreamEventAt
+                    lastText: self.lastTextEventAt
                 )
                 if isStalled != stalled {
                     stalled = isStalled
@@ -1165,7 +1187,7 @@ final class ChatStore: ObservableObject {
         stallWatchdog?.cancel()
         stallWatchdog = nil
         stalledSince = nil
-        lastStreamEventAt = nil
+        lastTextEventAt = nil
         // The fade describes a reveal that is over; leaving it would strand the
         // flushed tail translucent with nothing left to tick it back to opaque.
         reveal = nil

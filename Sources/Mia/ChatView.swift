@@ -376,12 +376,17 @@ struct ChatView: View {
                             let stallSince: Date? = id == streamingID && !message.text.isEmpty
                                 ? store.stalledSince
                                 : nil
-                            // A mid-stream `.status` is only cleared on the
-                            // empty→text transition, so one that arrived after
-                            // the text ("Searching…") may still be alive — use
-                            // it when it is, else the generic label.
+                            // The line's label names whatever invisible work
+                            // is on record: a mid-stream `.status` (only
+                            // cleared on the empty→text transition, so one
+                            // that arrived after the text may still be alive)
+                            // when there is one; else thinking that has
+                            // arrived at least once means "Thinking"
+                            // (pendingReasoning updates unconditionally and is
+                            // only cleared when text is); pure silence is the
+                            // generic "Working".
                             let stallStatus: String? = stallSince != nil
-                                ? (store.pendingStatus ?? "Working")
+                                ? (store.pendingStatus ?? (store.pendingReasoning != nil ? "Thinking" : "Working"))
                                 : nil
                             MessageRow(
                                 message: message,
@@ -492,8 +497,16 @@ struct ChatView: View {
             // Text ticks arrive many times per second while streaming: the
             // follow-scroll must NOT be animated, or each tick restarts an
             // animation and layout never goes idle (this froze the app).
-            // Animate only on new rows.
-            .onChange(of: store.messages.last?.text) { _, _ in
+            // Animate only on new rows. The watched value is the last
+            // ASSISTANT row's text, not `messages.last?.text`: a mid-stream
+            // steer commit drops a static user row UNDER the streaming reply,
+            // so the true last row stops changing while the reply keeps
+            // growing — watching it went blind for the rest of the turn and
+            // only re-engaged when the auto-answer appended a fresh assistant
+            // row (the "bubble shoved out of sight until the reply finished"
+            // regression). The last assistant row IS the growing one wherever
+            // it sits.
+            .onChange(of: store.messages.last(where: { $0.role == .assistant })?.text) { _, _ in
                 if pinnedToBottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 } else {
@@ -733,22 +746,33 @@ struct ChatView: View {
         return .opacity.combined(with: .move(edge: .bottom))
     }
 
-    /// Disengage following only on an actual upward scroll (offset decrease) —
-    /// content growth also increases the bottom distance, and reacting to that
-    /// would break following on every big streamed chunk. Re-engage within 40pt
-    /// of the bottom. State writes happen only on transitions.
+    /// Disengage following only on an actual upward READ: the offset
+    /// decreasing while nothing else moved. Content growth also increases the
+    /// bottom distance, and AppKit adjusts the visible rect on any layout
+    /// churn — a consumed chip stack collapsing, a row insert, the panel
+    /// re-flowing — which can dip the offset too; reacting to the offset
+    /// alone mistook that churn for an upward scroll and wedged following
+    /// off for the rest of the turn. So the unpin rule additionally requires
+    /// the content and container heights to be IDENTICAL across the change:
+    /// pure user scrolling moves the offset and nothing else, while
+    /// inserts/removes/re-layout always disturb a height. Re-engage within
+    /// 40pt of the bottom. State writes happen only on transitions.
     @ViewBuilder
     private func trackingBottomPin(_ content: some View) -> some View {
         if #available(macOS 15.0, *) {
             content.onScrollGeometryChange(for: ScrollPin.self, of: { geometry in
                 ScrollPin(
                     offset: geometry.contentOffset.y.rounded(),
-                    bottomDistance: (geometry.contentSize.height - geometry.containerSize.height - geometry.contentOffset.y).rounded()
+                    bottomDistance: (geometry.contentSize.height - geometry.containerSize.height - geometry.contentOffset.y).rounded(),
+                    contentHeight: geometry.contentSize.height.rounded(),
+                    containerHeight: geometry.containerSize.height.rounded()
                 )
             }, action: { old, new in
                 if new.bottomDistance <= 40 {
                     if !pinnedToBottom { pinnedToBottom = true }
-                } else if new.offset < old.offset - 4 {
+                } else if new.offset < old.offset - 4,
+                          new.contentHeight == old.contentHeight,
+                          new.containerHeight == old.containerHeight {
                     if pinnedToBottom { pinnedToBottom = false }
                 }
             })
@@ -792,6 +816,13 @@ struct ChatView: View {
     private struct ScrollPin: Equatable {
         var offset: CGFloat
         var bottomDistance: CGFloat
+        /// Layout-stability witnesses for the unpin rule (see
+        /// trackingBottomPin): an offset decrease only counts as an upward
+        /// READ when neither height changed in the same geometry update —
+        /// row inserts, chip-stack collapse and panel re-flow all move a
+        /// height, a user scroll never does.
+        var contentHeight: CGFloat
+        var containerHeight: CGFloat
     }
 }
 
@@ -1000,6 +1031,24 @@ private struct MessageRow: View, Equatable {
                             style: .continuous
                         )
                     )
+                    // A committed steer answered only after the in-flight reply
+                    // finishes says so on its corner, not in a line beneath:
+                    // the old text hint competed with the (layout-reserved)
+                    // hover timestamp and pushed everything apart, while an
+                    // overlay badge costs the layout nothing. Several steers
+                    // can queue at once, so it stays small and quiet.
+                    .overlay(alignment: .topTrailing) {
+                        if message.pendingAnswer {
+                            // The top-trailing corner is rounded (18pt), so the
+                            // badge hangs off the shoulder of the curve rather
+                            // than a crisp edge; ~a third of its diameter out
+                            // keeps it clearly ON the corner while staying
+                            // shallow upward — the streaming reply it is queued
+                            // under is closer above than the next row is below.
+                            PendingAnswerBadge()
+                                .offset(x: 5, y: -5)
+                        }
+                    }
                     .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
                     .onHover { hovered = $0 }
                 }
@@ -1016,19 +1065,6 @@ private struct MessageRow: View, Equatable {
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .opacity(hovered ? 1 : 0)
                         .animation(.easeInOut(duration: 0.15), value: hovered)
-                }
-                // A committed steer sits under the still-streaming reply
-                // until the turn truly ends, when it is answered together
-                // with everything else committed — say so, so the silence
-                // isn't read as ignored. (ChatMessage's Equatable already
-                // covers the flag, so the row repaints when it flips.)
-                if message.pendingAnswer {
-                    HStack(spacing: 3) {
-                        Image(systemName: "clock.arrow.circlepath")
-                        Text("Answered when this reply finishes")
-                    }
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
                 }
                 // Only when this bubble is the last thing in the transcript, i.e.
                 // the reply came back empty and left nothing else to hang them on.
@@ -1337,6 +1373,44 @@ private struct StallIndicator: View {
                 pulsing = true
             }
         }
+    }
+}
+
+/// A queued follow-up's badge: small accent clock pinned to the corner of the
+/// user bubble it rides. Overlay-only by contract — the caller offsets it past
+/// the bubble edge and the layout never reserves space for it, which is the
+/// whole point after the old text hint kept fighting the reserved timestamp
+/// line. Internal (not private) so the `--shot pending` harness can compose it
+/// onto sample bubbles, the same seam WaitingIndicator uses.
+struct PendingAnswerBadge: View {
+    @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
+    @State private var pulsing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: "clock.arrow.circlepath")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(Theme.contrastingForeground(on: accentHex))
+            .frame(width: 14, height: 14)
+            .background(Circle().fill(Theme.color(accentHex)))
+            // Hairline ring in the underlying background: where the badge
+            // rides an accent-FILLED bubble the two are the same color, and
+            // without the cutout the circle melts into the corner.
+            .overlay(Circle().stroke(.background, lineWidth: 1))
+            // Quiet on purpose: several steers can queue at once, so this
+            // breathes rather than blinks — CA-driven repeatForever per the
+            // caret rule, never a timer re-evaluating body.
+            .opacity(pulsing ? 0.55 : 1)
+            .accessibilityLabel("Answered when this reply finishes")
+            .help("Answered when this reply finishes")
+            .onAppear {
+                // Reduce Motion: skip the pulse — a steady lit badge still
+                // says "queued" without moving.
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    pulsing = true
+                }
+            }
     }
 }
 
