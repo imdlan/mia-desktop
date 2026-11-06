@@ -54,6 +54,30 @@ struct ChatView: View {
     /// growing — no per-row stagger, this is a restore, not new content. False
     /// only for the frame or two between the restore and its reveal.
     @State private var transcriptRevealed = true
+    // ── Lane A: transcript windowing (TranscriptWindowing.swift) ──
+    // Rows outside the scroll viewport render as height-preserving placeholders
+    // instead of full MessageRows, so an off-screen row holds no NSTextField
+    // (and, in a layer-backed window, no CABackingStore). Nil means "not yet
+    /// windowed": EVERY row materializes until the viewport tracker's first
+    /// report, so a fresh conversation's initial layout and scroll-to-bottom
+    /// land on measured heights. Reset to nil only when the CONVERSATION
+    /// changes (P2-2 — see the onAppear gate).
+    @State private var windowIDs: Set<UUID>?
+    /// Two-phase jump target (timeline click / find step): forced materialized
+    /// for ~300ms around the scrollTo so the jump measures its row before
+    /// moving to it, masking the one-time estimate→measured correction.
+    @State private var pendingJumpID: UUID?
+    /// Generation token for jumpTo (P3): invalidated by a newer jump so a
+    /// quick second click can't fire the first jump's delayed scrollTo.
+    @State private var jumpToken = 0
+    /// Conversation the windowing state below belongs to (P2-2): remounts
+    /// that keep the conversation (⌘E draft-editor toggles, panel reopen)
+    /// reuse the existing window and height caches — no re-materialize-all —
+    /// while an identity change resets them wholesale.
+    @State private var lastConversationID: UUID?
+    /// Measured row heights shared with the viewport tracker. A class on
+    /// purpose: preference merges write it without re-evaluating any body.
+    @State private var layoutBox = TranscriptLayoutBox()
     @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -325,6 +349,22 @@ struct ChatView: View {
         let rerunID: UUID? = store.canRerunLastTurn
             ? store.messages.last(where: { $0.role != .activity })?.id
             : nil
+        // Lane A iron rule 3: rows that must NEVER degrade to a placeholder —
+        // the streaming row (its height changes every tick), the rerun row, the
+        // active ⌘F hit (its SelectableText reveals the matched characters),
+        // the bottom 3 rows (every scroll-to-bottom target), and any pending
+        /// two-phase jump target.
+        var forcedIDs: Set<UUID> = []
+        if let streamingID { forcedIDs.insert(streamingID) }
+        if let rerunID { forcedIDs.insert(rerunID) }
+        if let activeHit { forcedIDs.insert(activeHit.messageID) }
+        if let pendingJumpID { forcedIDs.insert(pendingJumpID) }
+        for row in store.messages.suffix(3) { forcedIDs.insert(row.id) }
+        // Refreshed every evaluation, before layout — hence before any
+        // preference callback reads it. `mergeMeasured` runs inside a Sendable
+        // onPreferenceChange closure and must not reach @MainActor store state
+        /// from there (the ContentHeightKey warning is the cautionary example).
+        layoutBox.currentMessages = store.messages
         return ScrollViewReader { proxy in
             trackingBottomPin(
                 ScrollView {
@@ -388,33 +428,82 @@ struct ChatView: View {
                             let stallStatus: String? = stallSince != nil
                                 ? (store.pendingStatus ?? (store.pendingReasoning != nil ? "Thinking" : "Working"))
                                 : nil
-                            MessageRow(
-                                message: message,
-                                rerunnable: id == rerunID,
-                                // The caret rides the fade head (Delta 4), so it
-                                // outlives the NETWORK turn that streamingID
-                                // tracks — the reveal can still be typing.
-                                showCaret: id == streamingID || revealing,
-                                bubbleMaxWidth: bubbleMaxWidth,
-                                find: rowFind,
-                                reveal: revealing ? revealFade : nil,
-                                waitingStatus: waiting,
-                                waitingReasoning: waitingReasoning,
-                                stalledSince: stallSince,
-                                stallStatus: stallStatus,
-                                capabilityAction: capabilityAction,
-                                onFork: { store.fork(at: id) },
-                                onExport: { exportReply(id) },
-                                onRetry: { store.retryLastTurn() },
-                                onEditPrompt: editLastPrompt,
-                                fullText: { store.fullText(of: id) },
-                                onRecordException: { store.recordManualCapabilityException($0) }
-                            )
-                            .equatable()
-                            .transition(rowTransition(for: message.role))
+                            // Lane A materialization gate. A materialized row is
+                            // EXACTLY the pre-windowing row — same MessageRow,
+                            // same .equatable() gating, same transition — plus a
+                            // passive GeometryReader height probe. Rows outside
+                            // the window become a Color.clear placeholder that
+                            // occupies the row's MEASURED height (iron rule 1:
+                            // cached measurement first, estimate only for rows
+                            // never materialized — a degrade must be height-
+                            // preserving, or the content height churns and fights
+                            // NSScrollView, the freeze shape). The swap is never
+                            // animated (iron rule 2) and forced rows (streaming /
+                            // waiting / rerun / find hit / bottom 3 / jump target)
+                            // never degrade (iron rule 3).
+                            if forcedIDs.contains(id) || (windowIDs?.contains(id) ?? true) {
+                                MessageRow(
+                                    message: message,
+                                    rerunnable: id == rerunID,
+                                    // The caret rides the fade head (Delta 4), so it
+                                    // outlives the NETWORK turn that streamingID
+                                    // tracks — the reveal can still be typing.
+                                    showCaret: id == streamingID || revealing,
+                                    bubbleMaxWidth: bubbleMaxWidth,
+                                    find: rowFind,
+                                    reveal: revealing ? revealFade : nil,
+                                    waitingStatus: waiting,
+                                    waitingReasoning: waitingReasoning,
+                                    stalledSince: stallSince,
+                                    stallStatus: stallStatus,
+                                    capabilityAction: capabilityAction,
+                                    onFork: { store.fork(at: id) },
+                                    onExport: { exportReply(id) },
+                                    onRetry: { store.retryLastTurn() },
+                                    onEditPrompt: editLastPrompt,
+                                    fullText: { store.fullText(of: id) },
+                                    onRecordException: { store.recordManualCapabilityException($0) }
+                                )
+                                .equatable()
+                                .transition(rowTransition(for: message.role))
+                                .background(
+                                    // Passive measurement: reports the row's laid-
+                                    // out height up the tree; the VStack-level
+                                    // onPreferenceChange merges it into the shared
+                                    // cache the tracker and placeholders read.
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: TranscriptRowHeightKey.self,
+                                            value: [id: geo.size.height]
+                                        )
+                                    }
+                                )
+                            } else {
+                                Color.clear
+                                    // The box's single height source (P2-1):
+                                    // measured cache first, else the estimate —
+                                    // computed once per row per width, not per
+                                    // body evaluation.
+                                    .frame(height: layoutBox.heightForPlacement(id) {
+                                        estimatedHeight(for: message)
+                                    })
+                                    .transition(.identity)
+                                    .accessibilityHidden(true)
+                            }
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
+                    // Lane A viewport probe: rides the ROWS' bounds (inside the
+                    // padding) so its frame origin is exactly the first row's
+                    // top edge — the tracker's document-space math then needs
+                    // no hardcoded insets. See TranscriptWindowing.swift.
+                    .background(
+                        TranscriptViewportTracker(
+                            messages: store.messages,
+                            box: layoutBox,
+                            onWindowChange: { windowIDs = $0 }
+                        )
+                    )
                     .padding(.top, 56)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -422,6 +511,18 @@ struct ChatView: View {
                     // it cannot change any row's metrics, so nothing re-measures.
                     .opacity(transcriptRevealed ? 1 : 0)
                     .offset(y: transcriptRevealed || reduceMotion ? 0 : 8)
+                    // Lane A: merge every materialized row's measured height
+                    // into the shared cache. The box does the merge AND the
+                    // P1-1 scroll-offset compensation for estimate→measured
+                    // corrections of rows above the viewport (see
+                    // TranscriptLayoutBox.mergeMeasured); it owns the probe
+                    // reference and the row-top accumulation, so body stays
+                    // free of geometry math. Writing the class property (not
+                    // @State) cannot re-evaluate any body; the callback runs
+                    // after layout, outside any view update.
+                    .onPreferenceChange(TranscriptRowHeightKey.self) { measured in
+                        layoutBox.mergeMeasured(measured)
+                    }
                 }
             )
             .background(
@@ -430,6 +531,14 @@ struct ChatView: View {
                 }
             )
             .onPreferenceChange(TranscriptWidthKey.self) { transcriptWidth = $0 }
+            // Lane A: width determines height — every cached measurement AND
+            // estimate belongs to the width it was taken at. The box is the
+            // single clearing point (its widthDidChange drops both tables);
+            // materialized rows re-measure on the next layout pass, and
+            /// placeholder rows fall back to fresh estimates until they do.
+            .onChange(of: transcriptWidth) { _, _ in
+                layoutBox.widthDidChange(transcriptWidth)
+            }
             .mask(topFade)
             // Thinking-phase follow: the text/count onChanges below can't see
             // the waiting indicator's height jumps (text stays "", count stays
@@ -484,9 +593,12 @@ struct ChatView: View {
                 // the pills row above and the composer below.
                 if timelineQuestions.count > 1 {
                     TranscriptTimeline(questions: timelineQuestions) { id in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                            proxy.scrollTo(id, anchor: .center)
-                        }
+                        // Lane A two-phase jump: the target row may currently be
+                        // a placeholder far outside the window — force it
+                        // materialized first, let a layout pass measure it, THEN
+                        // scroll, so the jump doesn't land on an estimate and
+                        // visibly correct afterwards.
+                        jumpTo(id, proxy: proxy)
                     }
                     // Matches the composer's 12pt trailing margin.
                     .padding(.trailing, 12)
@@ -560,7 +672,24 @@ struct ChatView: View {
             // invisible, so the reveal shows the end of the conversation with no
             // visible scroll jump (5d). onAppear covers the empty→loaded case
             // (this subtree is new); onChange covers replacing an open chat.
-            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            //
+            // Lane A / P2-2: reset windowing ONLY when the conversation
+            // identity changed. Remounts that keep the conversation (⌘E
+            // draft-editor toggles, a panel reopen) reuse the previous window
+            // set and height caches — the old window is valid on the first
+            // frame and the 0.3s materialize-all period disappears. An
+            // identity change (restore, new chat) resets windowing AND drops
+            // both cache tables in the box, so estimates from one conversation
+            // can never leak into another (and the tables only ever grow
+            // within one conversation).
+            .onAppear {
+                if lastConversationID != store.conversationID {
+                    lastConversationID = store.conversationID
+                    windowIDs = nil
+                    layoutBox.resetForNewConversation()
+                }
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
             .onChange(of: store.restoreTick) { _, _ in
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
@@ -654,7 +783,54 @@ struct ChatView: View {
         guard let hit,
               let message = store.messages.first(where: { $0.id == hit.messageID }),
               message.role == .activity || message.role == .error else { return }
-        proxy.scrollTo(hit.messageID, anchor: .center)
+        // Same two-phase jump as the timeline (Lane A); unanimated, matching
+        // the pre-windowing behavior of this path.
+        jumpTo(hit.messageID, animated: false, proxy: proxy)
+    }
+
+    /// Lane A two-phase jump: force the target row materialized (a layout pass
+    /// or two replaces its estimate with the measured height), scroll, then
+    /// unforce once the scroll has settled — by then the row is inside the
+    /// viewport tracker's window, so it stays materialized on its own.
+    ///
+    /// P3 generation token: a newer jump invalidates this one's pending legs,
+    /// so rapid timeline clicks can't fire a superseded delayed scrollTo ~50ms
+    /// after the click that replaced it. The pendingJumpID equality guard
+    /// alone couldn't prevent that mid-flight leg.
+    private func jumpTo(_ id: UUID, animated: Bool = true, proxy: ScrollViewProxy) {
+        // P1-2: a jump IS an intentional upward read — disengage the follow-pin
+        /// now, not when the unpin rule notices the offset move. On macOS 15
+        /// the rule needs contentHeight/containerHeight to be IDENTICAL across
+        /// the change, and the jump's flight can straddle estimate-correction
+        /// layout churn (windowing's compensation included), which defeats the
+        /// witness and would leave the pin engaged — the next streaming tick
+        /// would then yank the user back to the bottom. Harmless on macOS 14,
+        /// where the pin never disengages anyway.
+        pinnedToBottom = false
+        jumpToken += 1
+        let token = jumpToken
+        pendingJumpID = id
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 50_000_000) // ~3 frames: materialize + measure
+            guard token == jumpToken else { return } // superseded by a newer jump
+            if animated {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            } else {
+                proxy.scrollTo(id, anchor: .center)
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000) // let the scroll settle
+            guard token == jumpToken else { return }
+            if pendingJumpID == id { pendingJumpID = nil }
+        }
+    }
+
+    /// One-shot placeholder estimate for a row never materialized at this
+    /// width — the row's own measurement replaces it the moment it
+    /// materializes (TranscriptLayoutBox.estimatedHeight does the guessing).
+    private func estimatedHeight(for message: ChatMessage) -> CGFloat {
+        TranscriptLayoutBox.estimatedHeight(of: message, width: transcriptWidth)
     }
 
     private func findBar(matchCount: Int) -> some View {

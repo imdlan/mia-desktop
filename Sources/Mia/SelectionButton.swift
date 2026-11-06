@@ -325,11 +325,14 @@ final class SelectionButtonController {
     }
 
     private func removeEscTap() {
+        if let escSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), escSource, .defaultMode)
+        }
         if let escTap {
             CGEvent.tapEnable(tap: escTap, enable: false)
-            if let escSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), escSource, .defaultMode)
-            }
+            // tapCreate's mach port is only released once invalidated —
+            // disable + remove alone leak one port per show/hide cycle.
+            CFMachPortInvalidate(escTap)
         }
         escSource = nil
         escTap = nil

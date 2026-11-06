@@ -976,11 +976,16 @@ struct TableBlockView: View {
     /// short word plus padding stays legible instead of collapsing to a sliver.
     private static let minColumn: CGFloat = 72
 
-    /// Bounded cache for single-line cell widths: tableCell re-parses markdown
-    /// on every call, and this measures every cell of every table on each body
-    /// evaluation. NSCache (not a Dictionary) so an unlucky long session evicts
-    /// instead of growing — same family as MarkdownRenderer.proseCache.
-    nonisolated(unsafe) private static let widthCache = NSCache<NSString, NSNumber>()
+    /// Bounded cache (countLimit 4096) for single-line cell widths: tableCell
+    /// re-parses markdown on every call, and this measures every cell of every
+    /// table on each body evaluation. NSCache (not a Dictionary) so an unlucky
+    /// long session evicts instead of growing — same family as
+    /// MarkdownRenderer.proseCache.
+    nonisolated(unsafe) private static let widthCache: NSCache<NSString, NSNumber> = {
+        let cache = NSCache<NSString, NSNumber>()
+        cache.countLimit = 4096
+        return cache
+    }()
 
     /// Single-line rendered width of one cell's content (no padding).
     private static func idealWidth(_ text: String, bold: Bool) -> CGFloat {
