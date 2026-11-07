@@ -844,9 +844,16 @@ final class ChatStore: ObservableObject {
 
     /// Tick period. Each tick re-renders and re-lays-out the growing message, and
     /// that cost scales with its length — so long texts tick less often (and take
-    /// proportionally bigger steps to hold the same feel).
+    /// proportionally bigger steps to hold the same feel). A full-file rewrite
+    /// (e.g. a whole .mjml file streamed back as one code block) reaches hundreds
+    /// of KB, where even 100 ms ticks mean thousands of full-text re-layouts —
+    /// hence the coarser tiers above 48k/192k chars.
     nonisolated static func typewriterInterval(forLength count: Int) -> Int {
-        count > 12_000 ? 100 : count > 4_000 ? 66 : 33
+        count > 192_000 ? 400
+            : count > 48_000 ? 200
+            : count > 12_000 ? 100
+            : count > 4_000 ? 66
+            : 33
     }
 
     /// Characters to reveal on one tick.

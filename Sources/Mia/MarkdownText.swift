@@ -450,21 +450,40 @@ enum MarkdownRenderer {
     private static let codeCache: NSCache<NSString, NSAttributedString> = {
         let cache = NSCache<NSString, NSAttributedString>()
         cache.countLimit = 64
+        // Total-cost cap in UTF-16 units: a streaming full-file rewrite inserts a
+        // fresh full-text key + full-text attributed copy EVERY typewriter tick,
+        // and a count-only limit let dozens of those pile up into hundreds of MB
+        // of resident copies (observed as a ~2 GB Mia process).
+        cache.totalCostLimit = 4_000_000
         return cache
     }()
+
+    /// Past this length a code block renders without Splash syntax color. During
+    /// a full-file rewrite every typewriter tick produces a new prefix, so the
+    /// cache key (the full text) never hits and Splash re-tokenizes the whole
+    /// block every ~100 ms — hundreds of MB of transient allocation on its own.
+    /// Plain rendering keeps big blocks O(n) per tick; syntax color is not worth
+    /// gigabytes on a several-hundred-KB block nobody reads inline anyway.
+    private static let maxHighlightedCodeLength = 20_000
 
     static func highlightedCode(_ code: String, dark: Bool = true) -> NSAttributedString {
         let key = "\(dark ? "d" : "l")|\(code)" as NSString
         if let cached = codeCache.object(forKey: key) { return cached }
-        let highlighter = dark ? darkHighlighter : lightHighlighter
-        let highlighted = NSMutableAttributedString(attributedString: highlighter.highlight(code))
+        let source: NSAttributedString
+        if code.count > maxHighlightedCodeLength {
+            source = NSAttributedString(string: code)
+        } else {
+            let highlighter = dark ? darkHighlighter : lightHighlighter
+            source = highlighter.highlight(code)
+        }
+        let highlighted = NSMutableAttributedString(attributedString: source)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 4
         highlighted.addAttributes([
             .font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular),
             .paragraphStyle: paragraph,
         ], range: NSRange(location: 0, length: highlighted.length))
-        codeCache.setObject(highlighted, forKey: key)
+        codeCache.setObject(highlighted, forKey: key, cost: highlighted.length)
         return highlighted
     }
 
