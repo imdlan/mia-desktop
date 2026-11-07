@@ -197,10 +197,13 @@ enum MarkdownRenderer {
     // MARK: - Prose → NSAttributedString
 
     // Bounded: streaming produces a new string per tick, so uncapped caches would
-    // fill with thousands of one-off intermediate entries.
+    // fill with thousands of one-off intermediate entries. Cost-capped too
+    // (P32): counts alone let a few hundred full-text entries of a long turn
+    // sit resident.
     private static let proseCache: NSCache<NSString, NSAttributedString> = {
         let cache = NSCache<NSString, NSAttributedString>()
         cache.countLimit = 256
+        cache.totalCostLimit = 4_000_000
         return cache
     }()
 
@@ -225,6 +228,7 @@ enum MarkdownRenderer {
     private static let reasoningCache: NSCache<NSString, NSAttributedString> = {
         let cache = NSCache<NSString, NSAttributedString>()
         cache.countLimit = 64
+        cache.totalCostLimit = 4_000_000
         return cache
     }()
 
@@ -267,7 +271,7 @@ enum MarkdownRenderer {
         let key = "\(appearanceKey)|\(markdown)" as NSString
         if let hit = cache.object(forKey: key) { return hit }
         let built = build()
-        cache.setObject(built, forKey: key)
+        cache.setObject(built, forKey: key, cost: built.length)
         return built
     }
 

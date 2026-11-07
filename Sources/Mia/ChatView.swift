@@ -1763,9 +1763,31 @@ struct ThinkingScroller: NSViewRepresentable {
             textView.textStorage?.setAttributedString(rendered(text))
         }
         context.coordinator.shown = text
+        trimHead(of: textView)
         // Unanimated, per the follow-scroll rule: at this update rate an
         // animation would restart every tick and layout would never settle.
         if following { textView.scrollToEndOfDocument(nil) }
+    }
+
+    /// The live feed is a TAIL window, not an archive. Every append lays out the
+    /// whole document, so a long thinking turn (100k+ chars over many minutes)
+    /// grew that cost without bound — the P32 memory/CPU follow-on. Past the
+    /// threshold the head is deleted down to the target (aligned to a line
+    /// start); the hysteresis means the O(remaining) delete runs once per
+    /// trimThreshold−trimTarget characters, not per tick. Nothing is lost: the
+    /// settled disclosure renders the full reasoning once the answer arrives.
+    private static let trimThreshold = 24_000
+    private static let trimTarget = 20_000
+
+    private func trimHead(of textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let length = storage.length
+        guard length > Self.trimThreshold else { return }
+        let source = storage.string as NSString
+        var cut = length - Self.trimTarget
+        while cut < length, source.character(at: cut) != 0x0A { cut += 1 }
+        guard cut < length else { return }
+        storage.deleteCharacters(in: NSRange(location: 0, length: cut + 1))
     }
 
     private func isAtBottom(_ scroll: NSScrollView) -> Bool {

@@ -213,6 +213,8 @@ enum CodexResponsesClient {
         reasoningPrefix: String,
         continuation: AsyncStream<ChatStreamEvent>.Continuation
     ) async throws -> RoundOutcome {
+        // Snapshot events are gated in consumeStream (the SSE loop that produces
+        // them); this function only issues terminal events.
         var body: [String: Any] = [
             "model": model,
             "instructions": instructions,
@@ -295,6 +297,11 @@ enum CodexResponsesClient {
         var reasoning = reasoningPrefix
         var roundItems: [[String: Any]] = []
         var toolCalls: [ToolCall] = []
+        // Full-snapshot events leave at a bounded rate; whatever is still
+        // pending when the round ends (return or throw) is flushed on the way
+        // out, so the tail of the round's text is never lost.
+        var gate = SnapshotGate()
+        defer { gate.flush(into: continuation) }
 
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue } // skip "event:" and keepalives
@@ -315,7 +322,7 @@ enum CodexResponsesClient {
                     }
                     roundText += piece
                     visible += piece
-                    continuation.yield(.partial(visible))
+                    gate.partial(visible, into: continuation)
                 }
 
             // Reasoning items stream no visible text but can run for a long
@@ -333,7 +340,7 @@ enum CodexResponsesClient {
             case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
                 if let piece = event["delta"] as? String, !piece.isEmpty {
                     reasoning += piece
-                    continuation.yield(.reasoning(reasoning))
+                    gate.reasoning(reasoning, into: continuation)
                 }
 
             // A new summary part is a paragraph break between thoughts, not

@@ -480,6 +480,9 @@ enum CodexAppServerClient {
                 return summary.isEmpty ? reasoningRaw.snapshot : summary
             }
             var finished = false
+            // Snapshot events (agent text / thinking) leave at a bounded rate —
+            // see SnapshotGate. Flushed before the turn's terminal events below.
+            var gate = SnapshotGate()
             while !finished, let message = try session.nextMessage() {
                 try holder.checkCancellation()
                 if message["id"]?.intValue == turnRequestID {
@@ -494,7 +497,7 @@ enum CodexAppServerClient {
                         // `itemId` is required by the protocol; "" is a last-resort
                         // key so a nonconforming server still streams.
                         items.delta(id: params["itemId"]?.stringValue ?? "", text: delta)
-                        continuation.yield(.partial(items.snapshot))
+                        gate.partial(items.snapshot, into: continuation)
                     }
                 // Thinking. Keyed like agentMessage deltas, but by item AND
                 // part index (`summaryIndex`/`contentIndex` are required by the
@@ -509,14 +512,14 @@ enum CodexAppServerClient {
                         reasoningSummary.delta(
                             id: reasoningKey(params, index: "summaryIndex"), text: delta
                         )
-                        continuation.yield(.reasoning(reasoningSnapshot()))
+                        gate.reasoning(reasoningSnapshot(), into: continuation)
                     }
                 case "item/reasoning/textDelta":
                     if let delta = params["delta"]?.stringValue {
                         reasoningRaw.delta(
                             id: reasoningKey(params, index: "contentIndex"), text: delta
                         )
-                        continuation.yield(.reasoning(reasoningSnapshot()))
+                        gate.reasoning(reasoningSnapshot(), into: continuation)
                     }
                 case "item/started":
                     if let activity = activityLabel(item: params["item"]?.objectValue) {
@@ -542,7 +545,7 @@ enum CodexAppServerClient {
                             id: item["id"]?.stringValue ?? "",
                             text: item["text"]?.stringValue ?? ""
                         )
-                        continuation.yield(.partial(items.snapshot))
+                        gate.partial(items.snapshot, into: continuation)
                     case "webSearch":
                         continuation.yield(.activity(webSearchLabel(item)))
                     default:
@@ -554,9 +557,7 @@ enum CodexAppServerClient {
                         // in-flight partial would double up with the re-stream —
                         // drop it, and say what the pause is instead of stalling
                         // silently.
-                        if items.dropInFlight() {
-                            continuation.yield(.partial(items.snapshot))
-                        }
+                        let droppedItems = items.dropInFlight()
                         // Thinking is re-delivered by the retry too, and no
                         // reasoning entry is ever marked completed (the
                         // protocol's authoritative text arrives only for
@@ -565,17 +566,34 @@ enum CodexAppServerClient {
                         // never-glue-a-retry-onto-its-own-prefix rule.
                         // Both assemblies always, so the array rather than `||`,
                         // which would short-circuit past the second drop.
-                        let dropped = [
+                        let droppedReasoning = [
                             reasoningSummary.dropInFlight(), reasoningRaw.dropInFlight(),
-                        ]
-                        if dropped.contains(true) {
-                            continuation.yield(.reasoning(reasoningSnapshot()))
+                        ].contains(true)
+                        if droppedItems || droppedReasoning {
+                            // Deliver the aborted attempt's tail BEFORE the
+                            // reset (the UI must show what got dropped), then
+                            // force the post-drop snapshots through — a retry
+                            // reset is a state change, not a routine tick that
+                            // may sit in the gate's interval.
+                            gate.flush(into: continuation)
+                            gate.reset()
+                        }
+                        if droppedItems {
+                            gate.partial(items.snapshot, into: continuation)
+                        }
+                        if droppedReasoning {
+                            gate.reasoning(reasoningSnapshot(), into: continuation)
                         }
                         continuation.yield(.status("Temporary error — Codex is retrying…"))
                     } else if let message = params["error"]?.objectValue?["message"]?.stringValue {
+                        gate.flush(into: continuation)
                         continuation.yield(.error(friendlyError(message)))
                     }
                 case "turn/completed":
+                    // Terminal events for the turn: deliver whatever snapshot is
+                    // still pending first, or the persisted reasoning loses its
+                    // last flush interval.
+                    gate.flush(into: continuation)
                     let turn = params["turn"]?.objectValue
                     // Token usage rides the completed turn (schema: TokenUsage
                     // with input/output/total token counts). Both the

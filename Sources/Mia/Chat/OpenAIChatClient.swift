@@ -46,6 +46,60 @@ enum ChatStreamEvent {
     case contentRejected(ContentCapability, message: String)
 }
 
+/// Newest-wins gate for the full-snapshot stream events (`.partial`,
+/// `.reasoning`). They arrive at wire rate — dozens per second, each carrying
+/// the ENTIRE accumulated text — and the AsyncStream underneath is unbounded,
+/// so a long thinking turn outpaces the MainActor consumer and the backlog of
+/// full-text snapshots is what ballooned memory to ~1.5 GB (P32). Snapshots
+/// have replace-only semantics (the UI renders the latest one), so coalescing
+/// to at most one flush per interval is lossless. Call `flush` before the
+/// turn's terminal events — the persisted reasoning must not lose its tail.
+struct SnapshotGate {
+    private let interval: TimeInterval
+    private var lastFlush = Date.distantPast
+    private var pendingPartial: String?
+    private var pendingReasoning: String?
+
+    init(interval: TimeInterval = 0.05) { self.interval = interval }
+
+    mutating func partial(_ snapshot: String, into continuation: AsyncStream<ChatStreamEvent>.Continuation) {
+        pendingPartial = snapshot
+        flushIfDue(into: continuation)
+    }
+
+    mutating func reasoning(_ snapshot: String, into continuation: AsyncStream<ChatStreamEvent>.Continuation) {
+        pendingReasoning = snapshot
+        flushIfDue(into: continuation)
+    }
+
+    mutating func flush(into continuation: AsyncStream<ChatStreamEvent>.Continuation) {
+        if let snapshot = pendingPartial {
+            pendingPartial = nil
+            continuation.yield(.partial(snapshot))
+        }
+        if let snapshot = pendingReasoning {
+            pendingReasoning = nil
+            continuation.yield(.reasoning(snapshot))
+        }
+        lastFlush = Date()
+    }
+
+    /// Clears pending snapshots and the rate window, forcing the NEXT snapshot
+    /// through immediately. Used after an in-flight drop (a retry reset): the
+    /// aborted attempt's tail is flushed first, and the post-drop snapshot is
+    /// a state change, not a routine tick — the consumer must see both.
+    mutating func reset() {
+        pendingPartial = nil
+        pendingReasoning = nil
+        lastFlush = .distantPast
+    }
+
+    private mutating func flushIfDue(into continuation: AsyncStream<ChatStreamEvent>.Continuation) {
+        guard Date().timeIntervalSince(lastFlush) >= interval else { return }
+        flush(into: continuation)
+    }
+}
+
 enum OpenAIChatClient {
     /// How this turn may reach the web, if at all.
     enum WebAccess {
@@ -488,6 +542,11 @@ enum OpenAIChatClient {
         var reasoning = reasoningPrefix
         var pendingCalls: [Int: (id: String, name: String, arguments: String)] = [:]
         var usage: TurnUsage?
+        // Full-snapshot events leave at a bounded rate; whatever is still
+        // pending when the round ends (return or throw) is flushed on the way
+        // out, so the tail of the round's text is never lost.
+        var gate = SnapshotGate()
+        defer { gate.flush(into: continuation) }
 
         for try await line in bytes.lines {
             guard let delta = decodeDelta(line: line) else { continue }
@@ -501,11 +560,11 @@ enum OpenAIChatClient {
                 }
                 roundText += piece
                 visible += piece
-                continuation.yield(.partial(visible))
+                gate.partial(visible, into: continuation)
             }
             if let piece = delta.reasoning {
                 reasoning += piece
-                continuation.yield(.reasoning(reasoning))
+                gate.reasoning(reasoning, into: continuation)
             }
             for call in delta.toolCalls {
                 var pending = pendingCalls[call.index] ?? (id: "", name: "", arguments: "")
