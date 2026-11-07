@@ -411,3 +411,17 @@
 
 ### 验证(Owner: Orchestrator)
 - `swift build` 通过;`--smoke-typewriter` 全部 8 项断言 PASS(20k 字符 case 确认速率律未破坏);真机实测通过(用户验收:重放 mjml 全文修改任务,内存不再飙升)。
+
+## P32 长思考流式内存暴涨修复(用户反馈:长 thinking 中内存又涨到 ~1.5GB,并质疑 Ports 偏高)
+
+**背景**:P31 修复的是「大代码块渲染」路径;长思考走的是**另一条路**——reasoning delta → 网络客户端 → 流事件 → ThinkingScroller,三处叠加把内存推到 1.45GB(Activity Monitor 实测,Ports 597 为稳态基线非泄漏,见文末)。两案根因不同,P31 不覆盖本案:
+
+### 需求
+- R32.1 **快照事件节流(主因)**:三个客户端(CodexAppServerClient/OpenAIChatClient/CodexResponsesClient)每条 reasoning/partial delta 都向**无界 AsyncStream** yield 一份**全文快照**(O(n²) 分配);网络线程生产快于 MainActor 消费时积压无上界,每个积压元素持有几百 KB。新增 `SnapshotGate`(OpenAIChatClient.swift):newest-wins 合并,50ms 至多发一份;`defer` 保证轮次结束/异常路径 flush 尾部;`.done`/`.error` 前主动 flush——落盘的 reasoning 不丢尾。
+- R32.2 **重试重置语义**:Codex willRetry 重置(dropInFlight)时,先 flush 被中止尝试的尾部、再 `gate.reset()` 强制重置后的快照立即通过——重置是状态切换,不允许滞留在节流窗口里(此缺陷由 `--smoke-codex-app-server-streaming` 揪出:mock 剧本毫秒级跑完,半答快照被 50ms 窗口吞掉,断言 sawAborted 失败)。
+- R32.3 **ThinkingScroller 尾部窗口**:每 tick append 触发全文档 TextKit 排版,100k+ 字符长思考成本无界。>24k 字符裁头至 20k(对齐行首,滞回设计使 O(remaining) 的删除约每 4k 字符一次而非每 tick);完整 reasoning 由回合结束后的 disclosure 一次性渲染,内容不丢。
+- R32.4 **渲染缓存补总量上限**:proseCache(256 条)/reasoningCache(64 条)此前只限条数,P31 只修了 codeCache;两者补 `totalCostLimit = 4M`(UTF-16 计),`setObject` 带 cost。
+- R32.5 **Ports 结论(审计,非代码)**:静态审计全部 Mach port 资源——TranscriptProbeView observers、CGEventTap(SelectionButton)、ComposerView widthObserver、每回合 Process/3×Pipe/DispatchSourceTimer/stderr handler——全部严格配对释放;两帧截图 602→597 略降。~600 为 AppKit/SwiftUI/NSStatusItem/XPC + 活跃回合子进程的稳态基线,与内存不同源,不修。
+
+### 验证(Owner: Orchestrator)
+- `swift build` 通过;`--smoke-codex-app-server-streaming` PASS(R32.2 修复后)、`--smoke-codex-app-server-backpressure`/`--smoke-codex-app-server-timeout`/`--smoke-steer`/`--smoke-pin`/`--smoke-typewriter` 回归全 PASS;真机实测通过(用户验收)。
