@@ -399,3 +399,15 @@
 
 ### 验证(Owner: Orchestrator)
 - `--smoke-pin`:`after steer insert 8.0pt`、steer-insert-holds ok(连同既有 send-repins/hold);`--smoke-steer` 29 项、`--smoke-typewriter` 回归 PASS;真机验收通过(插入即可见、持续钉底跟随、上滚正常解除)。
+
+## P31 流式大代码块内存暴涨修复(用户反馈:改一个 mjml 文件内存冲到 2GB)
+
+**背景**:让 agent 全文重写一个文件(如整个 `.mjml`)时,流式输出把几百 KB 文本作为**单个不断增长的代码块**送进渲染路径,主进程内存冲到 ~2GB(Activity Monitor 实测 1.97GB,系统 swap 9.8GB)。与 MJML 本身无关——仓库没有任何 mjml 特殊处理,是「agent 流式输出大文件」的通用路径,三处叠加:
+
+### 需求
+- R31.1 **超长代码块降级 plain 渲染**:`highlightedCode` 的缓存 key 是**完整代码文本**,流式期间每 tick 前缀都变 → 必 miss → Splash 对全文每 ~100ms 重新 tokenize 一遍(每 tick 数十 MB 瞬时分配)。>20k 字符的代码块改为无语法色 plain 渲染,每 tick 成本降为 O(n);几千 KB 的块没有逐 tick 上色的意义。
+- R31.2 **高亮缓存加总量上限**:`codeCache` 只限条数(64)不限总量,每 tick 塞入「全文 key + 全文高亮拷贝」,数十份全文驻留内存。增 `totalCostLimit = 4M`(UTF-16 计),滚动淘汰,条数上限不变。
+- R31.3 **typewriter 超长降频**:tick 间隔原来到 100ms 封顶,几百 KB 输出 = 数千次全量重排。增 >48k → 200ms、>192k → 400ms 档位;步长在 `typewriterStep` 里随 interval 等比放大,打字机视觉速率不变,重排次数减半~1/4。
+
+### 验证(Owner: Orchestrator)
+- `swift build` 通过;`--smoke-typewriter` 全部 8 项断言 PASS(20k 字符 case 确认速率律未破坏);真机实测通过(用户验收:重放 mjml 全文修改任务,内存不再飙升)。
